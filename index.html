@@ -4,32 +4,32 @@
     <meta charset="UTF-8">
     <title>Anton Runner – Alona Beach</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <!-- Скрипт Telegram WebApp -->
+    <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         html, body {
             margin: 0;
             padding: 0;
-            background: #87CEEB; /* небо */
+            background: #000;
             overflow: hidden;
-            touch-action: none; /* чтобы жесты свайпа работали корректно */
+            touch-action: none;
         }
         #gameCanvas {
             display: block;
-            background: linear-gradient(#87CEEB 40%, #00BFFF 40%, #00BFFF 55%, #FFF5EE 55%, #FFF5EE 100%);
-            /* небо -> море -> пляж */
         }
         #overlayText {
             position: absolute;
             top: 10%;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(255, 255, 255, 0.9);
-            padding: 10px 16px;
-            border-radius: 8px;
-            font-family: Arial, sans-serif;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 10px 18px;
+            border-radius: 14px;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             font-size: 18px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.25);
             text-align: center;
+            min-width: 180px;
         }
     </style>
 </head>
@@ -38,12 +38,14 @@
 <div id="overlayText">Anton is ready!</div>
 
 <script>
+    // ===== Telegram WebApp init =====
     const tg = window.Telegram?.WebApp;
     if (tg) {
         tg.expand();
         tg.enableClosingConfirmation();
     }
 
+    // ===== Canvas setup =====
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
@@ -52,27 +54,34 @@
         canvas.height = window.innerHeight;
     }
     resizeCanvas();
-    window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('resize', () => {
+        resizeCanvas();
+        groundY = canvas.height * GROUND_Y_RATIO;
+        if (hero.onGround) hero.y = groundY - hero.height;
+    });
 
-    // ====== Игровые константы ======
-    const GROUND_Y_RATIO = 0.75; // уровень земли
-    const HERO_WIDTH = 40;
-    const HERO_HEIGHT = 70;
-    const GRAVITY = 0.7;
-    const JUMP_VELOCITY = -14;
-    const GAME_SPEED = 6;
-    const OBSTACLE_WIDTH = 40;
-    const OBSTACLE_HEIGHT = 40;
-    const BONUS_SIZE = 30;
+    const overlayEl = document.getElementById('overlayText');
+
+    // ===== Game constants =====
+    const GROUND_Y_RATIO = 0.78;
+    const HERO_WIDTH = 60;
+    const HERO_HEIGHT = 110;
+    const GRAVITY = 0.75;
+    const JUMP_VELOCITY = -17;
+    const GAME_SPEED = 7;
+    const OBSTACLE_WIDTH = 60;
+    const OBSTACLE_HEIGHT = 55;
+    const BONUS_SIZE = 42;
     const MAX_LIVES = 3;
     const TOTAL_OBSTACLES_TO_WIN = 15;
-    const OBSTACLE_TO_BONUS_RATIO = 4; // 4 препятствия:1 бонус
+    const OBSTACLE_TO_BONUS_RATIO = 4;
+    const HIT_INVULNERABLE_FRAMES = 45; // ~0.75 сек при 60fps
 
-    // ====== Состояние игры ======
+    // ===== Game state =====
     let groundY = canvas.height * GROUND_Y_RATIO;
 
     let hero = {
-        x: canvas.width * 0.1,
+        x: canvas.width * 0.14,
         y: groundY - HERO_HEIGHT,
         width: HERO_WIDTH,
         height: HERO_HEIGHT,
@@ -83,57 +92,72 @@
         score: 0,
         obstaclesPassed: 0,
         finished: false,
-        alive: true
+        alive: true,
+        hitTimer: 0 // счётчик мигания после удара
     };
 
     let obstacles = [];
     let bonuses = [];
+    let activeBonusAnimations = []; // анимация перелёта бонуса к сердцам
+
     let frames = 0;
-    let lastTypeWasBonus = false;
     let gameOver = false;
     let gameStarted = false;
     let touchStartY = null;
 
-    const overlayEl = document.getElementById('overlayText');
-
-    // ====== Вспомогательные функции ======
-
+    // ===== Utils =====
     function rand(min, max) {
         return Math.random() * (max - min) + min;
     }
 
+    function rectsIntersect(a, b) {
+        const bw = b.width ?? b.size;
+        const bh = b.height ?? b.size;
+        return !(
+            a.x + a.width < b.x ||
+            a.x > b.x + bw ||
+            a.y + a.height < b.y ||
+            a.y > b.y + bh
+        );
+    }
+
+    function lerp(a, b, t) {
+        return a + (b - a) * t;
+    }
+
+    // ===== Spawning =====
     function spawnObstacleOrBonus() {
-        const baseX = canvas.width + 20;
+        const baseX = canvas.width + 40;
         const r = Math.random();
 
-        // Препятствий в 4 раза больше, чем бонусов
         if (r < 1 / (OBSTACLE_TO_BONUS_RATIO + 1)) {
-            // бонус
-            let bonus = {
+            // бонус (ром / пиво)
+            const bonusY = groundY - HERO_HEIGHT - BONUS_SIZE - rand(10, 60);
+            bonuses.push({
                 x: baseX,
-                y: groundY - HERO_HEIGHT - BONUS_SIZE - rand(10, 40),
+                y: bonusY,
                 size: BONUS_SIZE,
-                type: Math.random() < 0.5 ? 'rum' : 'beer'
-            };
-            bonuses.push(bonus);
-            lastTypeWasBonus = true;
+                type: Math.random() < 0.5 ? "rum" : "beer"
+            });
         } else {
-            // препятствие
-            let obstacle = {
+            // препятствие (змея / обезьяна)
+            obstacles.push({
                 x: baseX,
-                y: groundY - OBSTACLE_HEIGHT,
+                y: groundY - OBSTACLE_HEIGHT + 10,
                 width: OBSTACLE_WIDTH,
                 height: OBSTACLE_HEIGHT,
-                type: Math.random() < 0.5 ? 'snake' : 'monkey'
-            };
-            obstacles.push(obstacle);
-            lastTypeWasBonus = false;
+                type: Math.random() < 0.5 ? "snake" : "monkey"
+            });
         }
     }
 
+    // ===== Game state reset =====
     function resetGameState() {
         groundY = canvas.height * GROUND_Y_RATIO;
+        hero.x = canvas.width * 0.14;
         hero.y = groundY - HERO_HEIGHT;
+        hero.width = HERO_WIDTH;
+        hero.height = HERO_HEIGHT;
         hero.vy = 0;
         hero.onGround = true;
         hero.crouching = false;
@@ -142,24 +166,24 @@
         hero.obstaclesPassed = 0;
         hero.finished = false;
         hero.alive = true;
+        hero.hitTimer = 0;
 
         obstacles = [];
         bonuses = [];
+        activeBonusAnimations = [];
         frames = 0;
-        lastTypeWasBonus = false;
         gameOver = false;
         gameStarted = true;
         overlayEl.textContent = "Anton is ready!";
-        setTimeout(() => { overlayEl.style.display = 'none'; }, 800);
+        overlayEl.style.display = "block";
+        setTimeout(() => { overlayEl.style.display = 'none'; }, 900);
     }
 
     function startGame() {
+        if (gameStarted && !gameOver) return;
         resetGameState();
         if (tg) {
-            tg.MainButton.setText("Выход из игры").show().onClick(() => {
-                // просто закрываем игру по кнопке
-                tg.close();
-            });
+            tg.MainButton.setText("Выйти из игры").show().onClick(() => tg.close());
         }
     }
 
@@ -167,15 +191,9 @@
         gameOver = true;
         hero.finished = finished;
 
-        if (finished) {
-            overlayEl.style.display = 'block';
-            overlayEl.textContent = "Oh yeah!";
-        } else {
-            overlayEl.style.display = 'block';
-            overlayEl.textContent = "Game over";
-        }
+        overlayEl.style.display = "block";
+        overlayEl.textContent = finished ? "Oh yeah!" : "Game over";
 
-        // Готовим данные для бота
         const payload = {
             score: hero.score,
             finished: finished,
@@ -186,23 +204,13 @@
             try {
                 tg.sendData(JSON.stringify(payload));
             } catch (e) {
-                console.error("Ошибка при отправке данных в Telegram:", e);
+                console.error("Ошибка отправки данных в Telegram:", e);
             }
-            setTimeout(() => tg.close(), 1200);
+            setTimeout(() => tg.close(), 1400);
         }
     }
 
-    function rectsIntersect(a, b) {
-        return !(
-            a.x + a.width < b.x ||
-            a.x > b.x + (b.width || b.size) ||
-            a.y + a.height < b.y ||
-            a.y > b.y + (b.height || b.size)
-        );
-    }
-
-    // ====== Обработчики управления ======
-
+    // ===== Controls =====
     function jump() {
         if (!hero.alive || gameOver) return;
         if (hero.onGround) {
@@ -213,9 +221,9 @@
 
     function crouchStart() {
         if (!hero.alive || gameOver) return;
-        if (hero.onGround) {
+        if (hero.onGround && !hero.crouching) {
             hero.crouching = true;
-            hero.height = HERO_HEIGHT * 0.5;
+            hero.height = HERO_HEIGHT * 0.55;
             hero.y = groundY - hero.height;
         }
     }
@@ -229,29 +237,28 @@
         }
     }
 
-    // Клавиатура для десктопа
+    // Keyboard (desktop)
     window.addEventListener('keydown', (e) => {
-        if (!gameStarted) {
-            startGame();
-        }
+        if (!gameStarted || gameOver) startGame();
         if (e.code === 'Space' || e.code === 'ArrowUp') {
+            e.preventDefault();
             jump();
         } else if (e.code === 'ArrowDown') {
+            e.preventDefault();
             crouchStart();
         }
     });
 
     window.addEventListener('keyup', (e) => {
         if (e.code === 'ArrowDown') {
+            e.preventDefault();
             crouchEnd();
         }
     });
 
-    // Сенсорные жесты (свайп вверх/вниз)
+    // Touch (mobile)
     canvas.addEventListener('touchstart', (e) => {
-        if (!gameStarted) {
-            startGame();
-        }
+        if (!gameStarted || gameOver) startGame();
         if (e.touches.length === 1) {
             touchStartY = e.touches[0].clientY;
         }
@@ -262,154 +269,747 @@
         const touchEndY = e.changedTouches[0].clientY;
         const dy = touchEndY - touchStartY;
 
-        if (dy < -30) {
+        if (Math.abs(dy) < 25) {
+            // короткий тап — прыжок
+            jump();
+        } else if (dy < -25) {
             // свайп вверх
             jump();
-        } else if (dy > 30) {
+        } else if (dy > 25) {
             // свайп вниз
             crouchStart();
-            setTimeout(crouchEnd, 300);
+            setTimeout(crouchEnd, 280);
         }
 
         touchStartY = null;
     });
 
-    // ====== Отрисовка ======
-
+    // ===== DRAWING =====
     function drawBackground() {
+        const w = canvas.width;
         const h = canvas.height;
 
-        // Небо уже сделано градиентом фона. Добавим пальмы и надпись Alona Beach.
+        // Небо – плавный градиент
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, h);
+        skyGrad.addColorStop(0, "#69B7FF");
+        skyGrad.addColorStop(0.4, "#9DDCFF");
+        skyGrad.addColorStop(1, "#FDF9F3");
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, w, h);
 
-        // Пляжная линия
-        ctx.fillStyle = "#FFF5EE";
-        ctx.fillRect(0, groundY, canvas.width, h - groundY);
+        // Солнце
+        const sunX = w * 0.15;
+        const sunY = h * 0.2;
+        const sunR = 40;
+        const sunGrad = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, sunR);
+        sunGrad.addColorStop(0, "#FFF9C4");
+        sunGrad.addColorStop(1, "rgba(255, 249, 196, 0)");
+        ctx.fillStyle = sunGrad;
+        ctx.beginPath();
+        ctx.arc(sunX, sunY, sunR, 0, Math.PI * 2);
+        ctx.fill();
 
-        // Море
-        ctx.fillStyle = "#00BFFF";
-        ctx.fillRect(0, groundY - 40, canvas.width, 40);
+        // Далёкие холмы/острова
+        ctx.fillStyle = "#4DB6AC";
+        ctx.beginPath();
+        ctx.moveTo(0, h * 0.55);
+        ctx.quadraticCurveTo(w * 0.3, h * 0.45, w * 0.6, h * 0.5);
+        ctx.quadraticCurveTo(w * 0.85, h * 0.56, w, h * 0.52);
+        ctx.lineTo(w, h);
+        ctx.lineTo(0, h);
+        ctx.closePath();
+        ctx.fill();
 
-        // Надпись "Alona Beach"
-        ctx.fillStyle = "white";
-        ctx.font = "bold 24px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText("Alona Beach", canvas.width / 2, groundY - 60);
+        // Море (градиент)
+        const seaTop = groundY - 60;
+        const seaGrad = ctx.createLinearGradient(0, seaTop, 0, groundY);
+        seaGrad.addColorStop(0, "#00B8D4");
+        seaGrad.addColorStop(1, "#007ACC");
+        ctx.fillStyle = seaGrad;
+        ctx.fillRect(0, seaTop, w, groundY - seaTop);
 
-        // Пара условных пальм
-        function drawPalm(x) {
-            ctx.fillStyle = "#8B4513";
-            ctx.fillRect(x, groundY - 120, 10, 120);
-            ctx.fillStyle = "#228B22";
+        // Лёгкие волны
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 3; i++) {
+            const y = seaTop + 10 + i * 12;
             ctx.beginPath();
-            ctx.ellipse(x - 15, groundY - 130, 25, 12, 0, 0, Math.PI * 2);
-            ctx.fill();
+            for (let x = 0; x <= w; x += 20) {
+                const offset = Math.sin((frames / 20) + x / 40) * 3;
+                ctx.lineTo(x, y + offset);
+            }
+            ctx.stroke();
+        }
+
+        // Пляж (песок)
+        const sandGrad = ctx.createLinearGradient(0, groundY, 0, h);
+        sandGrad.addColorStop(0, "#FFE0B2");
+        sandGrad.addColorStop(1, "#FBC02D");
+        ctx.fillStyle = sandGrad;
+        ctx.fillRect(0, groundY, w, h - groundY);
+
+        // Лёгкая текстура песка
+        ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+        for (let i = 0; i < 60; i++) {
+            const x = rand(0, w);
+            const y = rand(groundY, h);
+            const r = rand(0.5, 1.6);
             ctx.beginPath();
-            ctx.ellipse(x + 20, groundY - 135, 30, 14, 0, 0, Math.PI * 2);
+            ctx.arc(x, y, r, 0, Math.PI * 2);
             ctx.fill();
         }
 
-        drawPalm(canvas.width * 0.2);
-        drawPalm(canvas.width * 0.8);
+        // Пальмы
+        function drawPalm(px) {
+            const trunkBottomY = groundY;
+            const trunkTopY = groundY - 160;
+
+            // Ствол
+            const trunkGrad = ctx.createLinearGradient(px, trunkTopY, px, trunkBottomY);
+            trunkGrad.addColorStop(0, "#5D4037");
+            trunkGrad.addColorStop(1, "#3E2723");
+            ctx.fillStyle = trunkGrad;
+
+            ctx.beginPath();
+            ctx.moveTo(px - 8, trunkBottomY);
+            ctx.quadraticCurveTo(px - 3, trunkTopY + 80, px - 5, trunkTopY);
+            ctx.lineTo(px + 8, trunkTopY);
+            ctx.quadraticCurveTo(px + 3, trunkTopY + 80, px + 5, trunkBottomY);
+            ctx.closePath();
+            ctx.fill();
+
+            // Крона
+            ctx.fillStyle = "#2E7D32";
+            for (let i = 0; i < 5; i++) {
+                const angle = -Math.PI / 2 + (i - 2) * 0.35;
+                const len = 90;
+                ctx.beginPath();
+                ctx.moveTo(px, trunkTopY);
+                const cx = px + Math.cos(angle) * (len * 0.4);
+                const cy = trunkTopY + Math.sin(angle) * (len * 0.4);
+                const ex = px + Math.cos(angle) * len;
+                const ey = trunkTopY + Math.sin(angle) * len;
+                ctx.quadraticCurveTo(cx, cy, ex, ey);
+                ctx.quadraticCurveTo(cx + 10, cy + 10, px, trunkTopY);
+                ctx.fill();
+            }
+        }
+
+        drawPalm(w * 0.25);
+        drawPalm(w * 0.78);
+
+        // Надпись Alona Beach на щите
+        const boardX = w * 0.5;
+        const boardY = groundY - 90;
+        ctx.save();
+        ctx.translate(boardX, boardY);
+        ctx.rotate(-0.05);
+        ctx.fillStyle = "#FFB74D";
+        ctx.strokeStyle = "#6D4C41";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.roundRect(-130, -26, 260, 52, 14);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = "#4E342E";
+        ctx.font = "bold 24px 'Segoe UI', Arial";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("Alona Beach", 0, 2);
+        ctx.restore();
     }
 
     function drawHero() {
-        // Тело Антона
-        ctx.fillStyle = "#F5DEB3"; // кожа
-        // ноги
-        ctx.fillRect(hero.x + 5, hero.y + hero.height - 20, 10, 20);
-        ctx.fillRect(hero.x + 25, hero.y + hero.height - 20, 10, 20);
+        const x = hero.x;
+        const y = hero.y;
+        const w = hero.width;
+        const h = hero.height;
 
-        // шлёпки
-        ctx.fillStyle = "#000000";
-        ctx.fillRect(hero.x + 3, hero.y + hero.height, 14, 4);
-        ctx.fillRect(hero.x + 23, hero.y + hero.height, 14, 4);
+        // Мигание после удара
+        if (hero.hitTimer > 0) {
+            const phase = Math.floor(hero.hitTimer / 3);
+            if (phase % 2 === 0) {
+                // пропускаем кадр, чтобы создать эффект "флэша"
+                return;
+            }
+        }
 
-        // шорты
-        ctx.fillStyle = "#1E90FF";
-        ctx.fillRect(hero.x, hero.y + hero.height - 40, hero.width, 25);
+        ctx.save();
+        ctx.translate(x, y);
 
-        // майка
-        ctx.fillStyle = "#000000";
-        ctx.fillRect(hero.x, hero.y + 15, hero.width, hero.height - 55);
+        // Базовый параметр для анимации бега
+        const runSpeed = 0.25; // чем больше, тем быстрее анимация
+        const runPhase = frames * runSpeed;
+        const runSin = Math.sin(runPhase);
+        const runCos = Math.cos(runPhase);
 
-        // голова
-        ctx.fillStyle = "#F5DEB3";
+        const isRunning = hero.onGround && !hero.crouching && hero.alive && !gameOver;
+
+        // Тень под ногами
+        ctx.fillStyle = "rgba(0,0,0,0.18)";
         ctx.beginPath();
-        ctx.arc(hero.x + hero.width / 2, hero.y + 10, 12, 0, Math.PI * 2);
+        ctx.ellipse(w / 2, h + 8, w * 0.4, 8, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // борода
-        ctx.fillStyle = "#654321";
+        // Ноги (с лёгкой анимацией)
+        ctx.fillStyle = "#F0C9A4";
+        const legWidth = 14;
+        const legHeight = 32;
+
+        // Левая нога
+        ctx.save();
+        ctx.translate(w * 0.25, h - legHeight - 6);
+        if (isRunning) {
+            ctx.rotate(runSin * 0.4); // мах ногой
+        }
+        ctx.fillRect(-legWidth / 2, 0, legWidth, legHeight);
+        ctx.restore();
+
+        // Правая нога
+        ctx.save();
+        ctx.translate(w * 0.75, h - legHeight - 6);
+        if (isRunning) {
+            ctx.rotate(-runSin * 0.4);
+        }
+        ctx.fillRect(-legWidth / 2, 0, legWidth, legHeight);
+        ctx.restore();
+
+        // Шлёпки
+        ctx.fillStyle = "#111";
         ctx.beginPath();
-        ctx.arc(hero.x + hero.width / 2, hero.y + 16, 10, Math.PI * 0.1, Math.PI * 0.9);
+        ctx.roundRect(w * 0.25 - legWidth / 2 - 2, h - 8, legWidth + 4, 6, 3);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.roundRect(w * 0.75 - legWidth / 2 - 2, h - 8, legWidth + 4, 6, 3);
         ctx.fill();
 
-        // тату на плече
-        ctx.fillStyle = "#333333";
-        ctx.fillRect(hero.x + 2, hero.y + 30, 8, 8);
+        // Шорты
+        const shortsTop = h - legHeight - 24;
+        const shortsHeight = 26;
+        const shortsGrad = ctx.createLinearGradient(0, shortsTop, 0, shortsTop + shortsHeight);
+        shortsGrad.addColorStop(0, "#1976D2");
+        shortsGrad.addColorStop(1, "#0D47A1");
+        ctx.fillStyle = shortsGrad;
+        ctx.beginPath();
+        ctx.roundRect(w * 0.18, shortsTop, w * 0.64, shortsHeight, 10);
+        ctx.fill();
+
+        // Майка без рукавов (чёрная)
+        const torsoTop = h * 0.32;
+        const torsoHeight = h * 0.36;
+        ctx.fillStyle = "#111";
+        ctx.beginPath();
+        ctx.moveTo(w * 0.2, torsoTop + 6);
+        ctx.quadraticCurveTo(w * 0.3, torsoTop - 8, w * 0.5, torsoTop - 10);
+        ctx.quadraticCurveTo(w * 0.7, torsoTop - 8, w * 0.8, torsoTop + 6);
+        ctx.lineTo(w * 0.82, torsoTop + torsoHeight);
+        ctx.quadraticCurveTo(w * 0.5, torsoTop + torsoHeight + 16, w * 0.18, torsoTop + torsoHeight);
+        ctx.closePath();
+        ctx.fill();
+
+        // Руки (анимация при беге)
+        ctx.fillStyle = "#F0C9A4";
+        const armWidth = 12;
+        const armHeight = 32;
+
+        // Левая рука
+        ctx.save();
+        ctx.translate(w * 0.18, torsoTop + 10);
+        let leftArmAngle = -0.2;
+        if (isRunning) leftArmAngle += runCos * 0.5;
+        ctx.rotate(leftArmAngle);
+        ctx.fillRect(-armWidth / 2, 0, armWidth, armHeight);
+        ctx.restore();
+
+        // Правая рука
+        ctx.save();
+        ctx.translate(w * 0.82, torsoTop + 10);
+        let rightArmAngle = 0.25;
+        if (isRunning) rightArmAngle -= runCos * 0.5;
+        ctx.rotate(rightArmAngle);
+        ctx.fillRect(-armWidth / 2, 0, armWidth, armHeight);
+        ctx.restore();
+
+        // Татуировка на левом плече
+        ctx.save();
+        ctx.translate(w * 0.18, torsoTop + 16);
+        ctx.fillStyle = "#333";
+        ctx.beginPath();
+        ctx.arc(0, 0, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#555";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-4, 0);
+        ctx.lineTo(4, 0);
+        ctx.moveTo(0, -4);
+        ctx.lineTo(0, 4);
+        ctx.stroke();
+        ctx.restore();
+
+        // Шея
+        ctx.fillStyle = "#F0C9A4";
+        ctx.beginPath();
+        ctx.roundRect(w * 0.4, torsoTop - 14, w * 0.2, 16, 6);
+        ctx.fill();
+
+        // Голова (небольшой «подпрыгивающий» эффект при беге)
+        const headCenterX = w * 0.5;
+        let headCenterY = torsoTop - 30;
+        if (isRunning) headCenterY += Math.sin(runPhase * 1.5) * 1.5;
+
+        ctx.fillStyle = "#F3D3AB";
+        ctx.beginPath();
+        ctx.ellipse(headCenterX, headCenterY, 18, 21, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Борода
+        ctx.fillStyle = "#5D4037";
+        ctx.beginPath();
+        ctx.moveTo(headCenterX - 16, headCenterY + 5);
+        ctx.quadraticCurveTo(headCenterX, headCenterY + 22, headCenterX + 16, headCenterY + 5);
+        ctx.quadraticCurveTo(headCenterX, headCenterY + 14, headCenterX - 16, headCenterY + 5);
+        ctx.fill();
+
+        // Глаза
+        ctx.fillStyle = "#222";
+        ctx.beginPath();
+        ctx.arc(headCenterX - 6, headCenterY - 4, 2.2, 0, Math.PI * 2);
+        ctx.arc(headCenterX + 6, headCenterY - 4, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Брови
+        ctx.strokeStyle = "#3E2723";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(headCenterX - 10, headCenterY - 10);
+        ctx.lineTo(headCenterX - 2, headCenterY - 11);
+        ctx.moveTo(headCenterX + 10, headCenterY - 10);
+        ctx.lineTo(headCenterX + 2, headCenterY - 11);
+        ctx.stroke();
+
+        // Рот (лёгкая ухмылка)
+        ctx.strokeStyle = "#4E342E";
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.arc(headCenterX, headCenterY + 8, 6, 0.15 * Math.PI, 0.85 * Math.PI);
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    function drawSnake(o) {
+        ctx.save();
+        ctx.translate(o.x, o.y);
+
+        const w = o.width;
+        const h = o.height;
+
+        // Тень
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        ctx.beginPath();
+        ctx.ellipse(w / 2, h + 8, w * 0.5, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Лёгкое движение волной
+        const waveOffset = Math.sin(frames / 10 + o.x / 30) * 3;
+
+        // Тело
+        ctx.strokeStyle = "#1B5E20";
+        ctx.lineWidth = 8;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        const segments = 5;
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const x = t * w;
+            const y = h * 0.6 + Math.sin(t * Math.PI * 2 + frames / 20) * 8 + waveOffset;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+
+        // Голова
+        ctx.fillStyle = "#2E7D32";
+        ctx.beginPath();
+        ctx.ellipse(w * 0.8, h * 0.3 + waveOffset, 12, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Глаз
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(w * 0.84, h * 0.27 + waveOffset, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#000";
+        ctx.beginPath();
+        ctx.arc(w * 0.84, h * 0.27 + waveOffset, 1.3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Язык
+        ctx.strokeStyle = "#C62828";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(w * 0.9, h * 0.3 + waveOffset);
+        ctx.lineTo(w * 0.98, h * 0.28 + waveOffset);
+        ctx.moveTo(w * 0.98, h * 0.28 + waveOffset);
+        ctx.lineTo(w * 1.02, h * 0.3 + waveOffset);
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    function drawMonkey(o) {
+        ctx.save();
+        ctx.translate(o.x, o.y);
+
+        const w = o.width;
+        const h = o.height;
+
+        // Тень
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
+        ctx.beginPath();
+        ctx.ellipse(w / 2, h + 8, w * 0.5, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Небольшое подпрыгивание
+        const jump = Math.sin(frames / 15 + o.x / 40) * 4;
+        ctx.translate(0, -jump);
+
+        // Тело
+        ctx.fillStyle = "#6D4C41";
+        ctx.beginPath();
+        ctx.roundRect(w * 0.25, h * 0.3, w * 0.5, h * 0.5, 16);
+        ctx.fill();
+
+        // Ноги
+        ctx.fillStyle = "#5D4037";
+        ctx.fillRect(w * 0.3, h * 0.7, 8, 20);
+        ctx.fillRect(w * 0.62, h * 0.7, 8, 20);
+
+        // Руки (слегка качают)
+        ctx.save();
+        ctx.translate(w * 0.26, h * 0.4);
+        ctx.rotate(0.3 + Math.sin(frames / 20) * 0.2);
+        ctx.fillRect(-4, 0, 8, 22);
+        ctx.restore();
+
+        ctx.save();
+        ctx.translate(w * 0.74, h * 0.4);
+        ctx.rotate(-0.3 - Math.sin(frames / 20) * 0.2);
+        ctx.fillRect(-4, 0, 8, 22);
+        ctx.restore();
+
+        // Голова
+        const cx = w * 0.5;
+        const cy = h * 0.24;
+        ctx.fillStyle = "#6D4C41";
+        ctx.beginPath();
+        ctx.arc(cx, cy, 16, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Морда светлее
+        ctx.fillStyle = "#D7CCC8";
+        ctx.beginPath();
+        ctx.ellipse(cx, cy + 4, 14, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Уши
+        ctx.fillStyle = "#5D4037";
+        ctx.beginPath();
+        ctx.arc(cx - 14, cy, 6, 0, Math.PI * 2);
+        ctx.arc(cx + 14, cy, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Глаза
+        ctx.fillStyle = "#000";
+        ctx.beginPath();
+        ctx.arc(cx - 5, cy - 2, 1.8, 0, Math.PI * 2);
+        ctx.arc(cx + 5, cy - 2, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Рот
+        ctx.strokeStyle = "#4E342E";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(cx, cy + 6, 5, 0.2 * Math.PI, 0.8 * Math.PI);
+        ctx.stroke();
+
+        // Хвост
+        ctx.strokeStyle = "#6D4C41";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(w * 0.8, h * 0.45);
+        ctx.quadraticCurveTo(w * 0.95, h * 0.25, w * 0.9, h * 0.1);
+        ctx.stroke();
+
+        ctx.restore();
     }
 
     function drawObstacle(o) {
-        ctx.fillStyle = o.type === 'snake' ? "#006400" : "#8B4513";
-        ctx.fillRect(o.x, o.y, o.width, o.height);
-        ctx.fillStyle = "#FFFFFF";
-        ctx.font = "12px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText(o.type === 'snake' ? "🐍" : "🐒", o.x + o.width / 2, o.y + o.height / 2 + 4);
+        if (o.type === "snake") drawSnake(o);
+        else drawMonkey(o);
     }
 
     function drawBonus(b) {
-        ctx.fillStyle = "#FFD700";
+        ctx.save();
+        ctx.translate(b.x, b.y);
+
+        const size = b.size;
+
+        // Тень
+        ctx.fillStyle = "rgba(0,0,0,0.2)";
         ctx.beginPath();
-        ctx.arc(b.x + b.size / 2, b.y + b.size / 2, b.size / 2, 0, Math.PI * 2);
+        ctx.ellipse(size / 2, size + 6, size * 0.55, 7, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.fillStyle = "#8B4513";
-        ctx.font = "12px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText(b.type === 'rum' ? "🍹" : "🍺", b.x + b.size / 2, b.y + b.size / 2 + 4);
+        // Бутылка
+        const bottleGrad = ctx.createLinearGradient(0, 0, 0, size);
+        if (b.type === "rum") {
+            bottleGrad.addColorStop(0, "#FFE082");
+            bottleGrad.addColorStop(1, "#FFA000");
+        } else { // beer
+            bottleGrad.addColorStop(0, "#C5E1A5");
+            bottleGrad.addColorStop(1, "#7CB342");
+        }
+
+        ctx.fillStyle = bottleGrad;
+        ctx.beginPath();
+        ctx.roundRect(size * 0.25, size * 0.1, size * 0.5, size * 0.7, 10);
+        ctx.fill();
+
+        // Горлышко
+        ctx.fillStyle = "#795548";
+        ctx.beginPath();
+        ctx.roundRect(size * 0.38, 0, size * 0.24, size * 0.18, 6);
+        ctx.fill();
+
+        // Блик
+        ctx.fillStyle = "rgba(255,255,255,0.45)";
+        ctx.beginPath();
+        ctx.roundRect(size * 0.3, size * 0.2, size * 0.12, size * 0.4, 8);
+        ctx.fill();
+
+        // Маленькая этикетка
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.beginPath();
+        ctx.roundRect(size * 0.32, size * 0.46, size * 0.36, size * 0.18, 6);
+        ctx.fill();
+
+        ctx.restore();
+    }
+
+    function drawBonusAnimations() {
+        activeBonusAnimations.forEach(anim => {
+            const t = anim.t;
+            const size = BONUS_SIZE * (1 - t * 0.3);
+            const x = lerp(anim.startX, anim.targetX, t);
+            const y = lerp(anim.startY, anim.targetY, t);
+
+            ctx.save();
+            ctx.translate(x, y);
+
+            // первые 70% пути — бутылка, потом превращается в сердечко
+            let alpha = 1;
+            if (t > 0.7) alpha = 1 - (t - 0.7) / 0.3;
+
+            if (t < 0.6) {
+                // бутылка
+                ctx.globalAlpha = alpha;
+                const bottleGrad = ctx.createLinearGradient(0, 0, 0, size);
+                if (anim.type === "rum") {
+                    bottleGrad.addColorStop(0, "#FFE082");
+                    bottleGrad.addColorStop(1, "#FFA000");
+                } else {
+                    bottleGrad.addColorStop(0, "#C5E1A5");
+                    bottleGrad.addColorStop(1, "#7CB342");
+                }
+                ctx.fillStyle = bottleGrad;
+                ctx.beginPath();
+                ctx.roundRect(size * 0.25, size * 0.1, size * 0.5, size * 0.7, 10);
+                ctx.fill();
+                ctx.fillStyle = "#795548";
+                ctx.beginPath();
+                ctx.roundRect(size * 0.38, 0, size * 0.24, size * 0.18, 6);
+                ctx.fill();
+            } else {
+                // сердечко
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = "#E53935";
+                ctx.beginPath();
+                const hw = size * 0.6;
+                const hh = size * 0.5;
+                const cx = 0;
+                const cy = 0;
+
+                ctx.moveTo(cx, cy + hh * 0.4);
+                ctx.bezierCurveTo(cx - hw, cy - hh * 0.1, cx - hw * 0.2, cy - hh,
+                    cx, cy - hh * 0.4);
+                ctx.bezierCurveTo(cx + hw * 0.2, cy - hh, cx + hw, cy - hh * 0.1,
+                    cx, cy + hh * 0.4);
+                ctx.fill();
+            }
+
+            ctx.restore();
+        });
+
+        ctx.globalAlpha = 1;
     }
 
     function drawHUD() {
-        // Жизни (сердечки)
-        const heartSize = 18;
-        ctx.font = `${heartSize}px Arial`;
+        ctx.font = "20px system-ui";
         ctx.textAlign = "left";
-        ctx.fillStyle = "#FF0000";
+
+        // Жизни — считаем позицию каждого сердечка,
+        // чтобы анимация бонуса могла лететь примерно в нужную зону
+        ctx.fillStyle = "#D32F2F";
+        const heartBaseX = 14;
+        const heartY = 32;
+        const heartSpacing = 26;
         let hearts = "";
         for (let i = 0; i < hero.lives; i++) {
             hearts += "❤ ";
+            ctx.fillText("❤", heartBaseX + i * heartSpacing, heartY);
         }
-        ctx.fillText(hearts, 10, 30);
+        if (hero.lives === 0) {
+            ctx.fillText("❤", heartBaseX, heartY); // пустое состояние
+        }
 
-        // Очки
-        ctx.fillStyle = "#000000";
-        ctx.font = "18px Arial";
+        // Очки и препятствия
+        ctx.fillStyle = "#111";
         ctx.textAlign = "right";
-        ctx.fillText(`Score: ${hero.score}`, canvas.width - 10, 30);
-
-        // Препятствия
-        ctx.textAlign = "right";
+        ctx.fillText(`Score: ${hero.score}`, canvas.width - 16, 28);
         ctx.fillText(
             `Obstacles: ${hero.obstaclesPassed}/${TOTAL_OBSTACLES_TO_WIN}`,
-            canvas.width - 10,
-            55
+            canvas.width - 16,
+            54
         );
     }
 
-    // ====== Игровой цикл ======
+    function drawFinalGirls() {
+        const baseX = canvas.width * 0.7;
+        const baseY = groundY;
 
+        function drawGirl(offsetX, phase) {
+            ctx.save();
+            const jumpOffset = Math.sin(frames / 8 + phase) * 8;
+            ctx.translate(baseX + offsetX, baseY - 110 + jumpOffset);
+
+            const w = 50;
+            const h = 100;
+
+            // Тень
+            ctx.fillStyle = "rgba(0,0,0,0.2)";
+            ctx.beginPath();
+            ctx.ellipse(w / 2, h + 10, w * 0.45, 8, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Ноги
+            ctx.fillStyle = "#5D4037";
+            ctx.fillRect(w * 0.3, h - 36, 10, 34);
+            ctx.fillRect(w * 0.6, h - 36, 10, 34);
+
+            // Ступни
+            ctx.fillStyle = "#3E2723";
+            ctx.beginPath();
+            ctx.roundRect(w * 0.26, h - 6, 16, 6, 3);
+            ctx.roundRect(w * 0.58, h - 6, 16, 6, 3);
+            ctx.fill();
+
+            // Тело
+            ctx.fillStyle = "#4E342E";
+            ctx.beginPath();
+            ctx.roundRect(w * 0.22, h * 0.3, w * 0.56, h * 0.4, 18);
+            ctx.fill();
+
+            // Купальник – верх
+            ctx.fillStyle = "#FF4081";
+            ctx.beginPath();
+            ctx.roundRect(w * 0.24, h * 0.34, w * 0.52, 14, 8);
+            ctx.fill();
+
+            // Купальник – низ
+            ctx.beginPath();
+            ctx.roundRect(w * 0.26, h * 0.52, w * 0.48, 16, 10);
+            ctx.fill();
+
+            // Руки
+            ctx.fillStyle = "#5D4037";
+            ctx.save();
+            ctx.translate(w * 0.24, h * 0.35);
+            ctx.rotate(-0.4);
+            ctx.fillRect(-4, 0, 8, 28);
+            ctx.restore();
+
+            ctx.save();
+            ctx.translate(w * 0.76, h * 0.35);
+            ctx.rotate(0.4);
+            ctx.fillRect(-4, 0, 8, 28);
+            ctx.restore();
+
+            // Голова
+            const cx = w * 0.5;
+            const cy = h * 0.22;
+            ctx.fillStyle = "#5D4037";
+            ctx.beginPath();
+            ctx.ellipse(cx, cy, 16, 19, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Лицо чуть светлее по центру
+            ctx.fillStyle = "#6D4C41";
+            ctx.beginPath();
+            ctx.ellipse(cx, cy + 2, 13, 12, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Глаза
+            ctx.fillStyle = "#000";
+            ctx.beginPath();
+            ctx.arc(cx - 5, cy - 2, 1.6, 0, Math.PI * 2);
+            ctx.arc(cx + 5, cy - 2, 1.6, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Улыбка
+            ctx.strokeStyle = "#3E2723";
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.arc(cx, cy + 5, 5, 0.2 * Math.PI, 0.8 * Math.PI);
+            ctx.stroke();
+
+            // Волосы
+            ctx.fillStyle = "#3E2723";
+            ctx.beginPath();
+            ctx.ellipse(cx, cy - 4, 18, 14, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(cx - 16, cy);
+            ctx.quadraticCurveTo(cx - 22, cy + 20, cx - 10, cy + 30);
+            ctx.quadraticCurveTo(cx - 8, cy + 10, cx - 16, cy);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(cx + 16, cy);
+            ctx.quadraticCurveTo(cx + 22, cy + 20, cx + 10, cy + 30);
+            ctx.quadraticCurveTo(cx + 8, cy + 10, cx + 16, cy);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        drawGirl(-70, 0);
+        drawGirl(0, 1.5);
+        drawGirl(70, 3.0);
+    }
+
+    // ===== Game loop =====
     function update() {
         if (!gameStarted || gameOver) return;
 
         frames++;
 
-        // Спавн препятствий/бонусов
-        if (frames % 60 === 0) { // примерно раз в секунду
+        if (frames % 55 === 0) {
             spawnObstacleOrBonus();
         }
 
-        // Физика героя
+        // Hero physics
         if (!hero.onGround) {
             hero.vy += GRAVITY;
             hero.y += hero.vy;
@@ -421,22 +1021,24 @@
             }
         }
 
-        // Движение препятствий и бонусов
-        obstacles.forEach(o => o.x -= GAME_SPEED);
-        bonuses.forEach(b => b.x -= GAME_SPEED);
+        // Hit timer (мигание)
+        if (hero.hitTimer > 0) {
+            hero.hitTimer--;
+        }
 
-        // Проверка выхода за экран
+        // Move obstacles & bonuses
+        obstacles.forEach(o => { o.x -= GAME_SPEED; });
+        bonuses.forEach(b => { b.x -= GAME_SPEED; });
+
+        // Remove off-screen, count obstacles
         obstacles = obstacles.filter(o => {
             if (o.x + o.width < 0) {
-                // Препятствие успешно пройдено
                 hero.obstaclesPassed += 1;
                 hero.score += 10;
 
                 if (hero.obstaclesPassed >= TOTAL_OBSTACLES_TO_WIN && !gameOver) {
-                    // Победа, но дадим чуть времени добежать до "девушек"
                     endGame(true);
                 }
-
                 return false;
             }
             return true;
@@ -444,7 +1046,7 @@
 
         bonuses = bonuses.filter(b => b.x + b.size > 0);
 
-        // Столкновения
+        // Collisions
         const heroRect = {
             x: hero.x,
             y: hero.y,
@@ -452,96 +1054,83 @@
             height: hero.height
         };
 
-        obstacles.forEach((o) => {
-            if (!gameOver && rectsIntersect(heroRect, o)) {
-                // Потеря жизни
-                hero.lives -= 1;
-                // Отбрасываем немного назад
-                hero.x = canvas.width * 0.1;
-                // убираем препятствие
-                o.x = -9999;
+        obstacles.forEach(o => {
+            if (!gameOver && hero.alive && rectsIntersect(heroRect, o)) {
+                if (hero.hitTimer <= 0) {
+                    hero.lives -= 1;
+                    hero.hitTimer = HIT_INVULNERABLE_FRAMES;
+                    o.x = -9999;
 
-                if (hero.lives <= 0) {
-                    hero.alive = false;
-                    endGame(false);
+                    if (hero.lives <= 0) {
+                        hero.alive = false;
+                        if (!gameOver) endGame(false);
+                    }
                 }
             }
         });
 
-        bonuses.forEach((b) => {
+        // Обработка бонусов: коллизия + запуск анимации
+        const remainingBonuses = [];
+        bonuses.forEach(b => {
             if (!gameOver && rectsIntersect(heroRect, b)) {
-                // +1 жизнь (но не больше MAX_LIVES)
+                // увеличиваем жизнь и очки
                 hero.lives = Math.min(MAX_LIVES, hero.lives + 1);
                 hero.score += 5;
-                b.x = -9999;
+
+                // координаты сердечка, к которому "летит" бонус
+                const heartIndex = Math.max(hero.lives - 1, 0);
+                const heartBaseX = 14;
+                const heartSpacing = 26;
+                const targetX = heartBaseX + heartIndex * heartSpacing;
+                const targetY = 20; // чуть выше текста
+
+                activeBonusAnimations.push({
+                    startX: b.x,
+                    startY: b.y,
+                    targetX: targetX,
+                    targetY: targetY,
+                    t: 0,
+                    type: b.type
+                });
+            } else {
+                remainingBonuses.push(b);
             }
         });
+        bonuses = remainingBonuses;
 
-        // Если герой «умер» и ещё не вызывали endGame – вызываем
-        if (!hero.alive && !gameOver) {
-            endGame(false);
-        }
+        // Обновление анимаций бонусов
+        activeBonusAnimations = activeBonusAnimations.filter(anim => {
+            anim.t += 0.05;
+            return anim.t < 1.0;
+        });
     }
 
     function render() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawBackground();
 
+        if (!gameStarted || gameOver) {
+            ctx.fillStyle = "rgba(0,0,0,0.65)";
+            ctx.font = "20px system-ui";
+            ctx.textAlign = "center";
+            ctx.fillText(
+                "Тапни по экрану или нажми любую клавишу, чтобы начать",
+                canvas.width / 2,
+                canvas.height * 0.5
+            );
+        }
+
         if (gameStarted) {
-            // Антон
             drawHero();
-
-            // Препятствия
             obstacles.forEach(drawObstacle);
-
-            // Бонусы
             bonuses.forEach(drawBonus);
 
-            // Если победа – рисуем финальную сцену
             if (hero.finished) {
-                // Три девушки за финишной чертой
-                const baseX = canvas.width * 0.7;
-
-                function drawGirl(x) {
-                    const baseY = groundY - 80;
-                    ctx.fillStyle = "#8B4513"; // кожа потемнее
-                    // ноги
-                    ctx.fillRect(x + 5, baseY + 30, 10, 30);
-                    ctx.fillRect(x + 25, baseY + 30, 10, 30);
-                    // тело
-                    ctx.fillRect(x, baseY, 40, 40);
-                    // голова
-                    ctx.beginPath();
-                    ctx.arc(x + 20, baseY - 10, 12, 0, Math.PI * 2);
-                    ctx.fill();
-                    // купальник
-                    ctx.fillStyle = "#FF69B4";
-                    ctx.fillRect(x, baseY + 10, 40, 8);
-                    ctx.fillRect(x, baseY + 30, 40, 12);
-                }
-
-                drawGirl(baseX - 60);
-                drawGirl(baseX);
-                drawGirl(baseX + 60);
-
-                // Антон в центре
-                ctx.save();
-                ctx.translate(baseX, groundY - HERO_HEIGHT);
-                // поднятые руки – просто надпись
-                ctx.restore();
+                drawFinalGirls();
             }
 
             drawHUD();
-        } else {
-            // До старта просто фон и надпись
-            ctx.fillStyle = "#000000";
-            ctx.font = "20px Arial";
-            ctx.textAlign = "center";
-            ctx.fillText(
-                "Нажми по экрану или нажми любую клавишу, чтобы начать",
-                canvas.width / 2,
-                canvas.height / 2
-            );
+            drawBonusAnimations();
         }
 
         requestAnimationFrame(render);
@@ -552,10 +1141,9 @@
         requestAnimationFrame(gameLoop);
     }
 
-    // Стартуем
+    // Start loops
     render();
     gameLoop();
-
 </script>
 </body>
 </html>
