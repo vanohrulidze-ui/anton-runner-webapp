@@ -18,7 +18,7 @@
       position: relative;
       width: 100%;
       height: 100%;
-      touch-action: none; /* чтобы жесты не скроллили страницу */
+      touch-action: none;
       background: #000;
       display: flex;
       align-items: center;
@@ -108,25 +108,24 @@
       pointer-events: none;
     }
   </style>
+  <!-- скрипт Телеграма: при локальном открытии просто не используется -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <div id="game-container">
     <canvas id="game" width="960" height="540"></canvas>
 
-    <!-- стартовое окно -->
     <div id="start-overlay" class="overlay">
       <div class="overlay-inner">
         <div class="overlay-title">Anton Beach Runner</div>
         <div class="overlay-text">
-          Нажми «Старт», чтобы Антон побежал по пляжу Аlona Beach!<br/>
+          Нажми «Старт», чтобы Антон побежал по пляжу Alona Beach!<br/>
           Тап по верхней половине экрана — прыжок, по нижней — присесть.
         </div>
         <button class="overlay-btn" id="start-btn">Старт</button>
       </div>
     </div>
 
-    <!-- финальное окно -->
     <div id="end-overlay" class="overlay" style="display:none;">
       <div class="overlay-inner">
         <div class="overlay-title" id="end-title"></div>
@@ -135,7 +134,6 @@
       </div>
     </div>
 
-    <!-- «Anton is ready!» / «Oh yeah!» -->
     <div id="speech-bubble" class="speech" style="display:none;"></div>
 
     <div class="hud-hint">
@@ -144,6 +142,34 @@
   </div>
 
   <script>
+    // Полифил для roundRect (на случай старых браузеров / Safari)
+    (function() {
+      const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+      if (!proto || proto.roundRect) return;
+      proto.roundRect = function(x, y, width, height, radius) {
+        let r = radius || 0;
+        if (typeof r === 'number') {
+          r = { tl: r, tr: r, br: r, bl: r };
+        } else {
+          const def = { tl: 0, tr: 0, br: 0, bl: 0 };
+          for (let k in def) {
+            r[k] = r[k] || def[k];
+          }
+        }
+        this.moveTo(x + r.tl, y);
+        this.lineTo(x + width - r.tr, y);
+        this.quadraticCurveTo(x + width, y, x + width, y + r.tr);
+        this.lineTo(x + width, y + height - r.br);
+        this.quadraticCurveTo(x + width, y + height, x + width - r.br, y + height);
+        this.lineTo(x + r.bl, y + height);
+        this.quadraticCurveTo(x, y + height, x, y + height - r.bl);
+        this.lineTo(x, y + r.tl);
+        this.quadraticCurveTo(x, y, x + r.tl, y);
+        this.closePath();
+        return this;
+      };
+    })();
+
     // --- базовая настройка canvas ---
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
@@ -161,7 +187,7 @@
     const images = {
       bg: loadImage('img/beach_bg.png'),
       antonRun: loadImage('img/anton_run.png'),
-      antonWin: loadImage('img/anton_win.png'), // опционально, если добавишь
+      antonWin: loadImage('img/anton_win.png'), // опционально
       girls: loadImage('img/girls_final.png')
     };
 
@@ -179,14 +205,13 @@
       bgOffset: 0,
       bgParallax: 0.4,
       spawnTimer: 0,
-      spawnInterval: 1.2, // секунды между препятствиями
+      spawnInterval: 1.2,
       bonusesCounter: 0
     };
 
-    // --- игрок (Антон) ---
     const player = {
       x: WIDTH * 0.2,
-      y: 0, // будет инициализирован ниже
+      y: 0,
       width: 110,
       height: 190,
       vy: 0,
@@ -196,18 +221,17 @@
       isSliding: false,
       slideTimer: 0,
       slideDuration: 0.45,
-      runBobPhase: 0, // для лёгкого подпрыгивания при беге
-      hitTimer: 0,    // мерцание после удара
-      invincibleTime: 1.2 // сек
+      runBobPhase: 0,
+      hitTimer: 0,
+      invincibleTime: 1.2
     };
 
     const groundY = HEIGHT * 0.78;
     player.y = groundY - player.height;
 
-    // --- препятствия и бонусы ---
-    const obstacles = []; // змеи/обезьяны
-    const bonuses = [];   // бутылки
-    const flyingHearts = []; // анимация полёта бонуса к сердцам
+    const obstacles = [];
+    const bonuses = [];
+    const flyingHearts = [];
 
     function spawnObstacle() {
       const types = ['snake', 'monkey'];
@@ -222,7 +246,6 @@
         passed: false
       });
 
-      // раз в 4 препятствия — бонус
       game.bonusesCounter++;
       if (game.bonusesCounter >= 4) {
         game.bonusesCounter = 0;
@@ -239,7 +262,6 @@
       }
     }
 
-    // --- утилиты ---
     function rectsOverlap(a, b) {
       return a.x < b.x + b.width &&
              a.x + a.width > b.x &&
@@ -251,7 +273,6 @@
       return v < min ? min : (v > max ? max : v);
     }
 
-    // --- управление игроком ---
     function jump() {
       if (!player.isOnGround || gameState !== 'running') return;
       player.vy = -player.jumpStrength;
@@ -265,7 +286,6 @@
       player.slideTimer = player.slideDuration;
     }
 
-    // --- ввод: клавиатура ---
     window.addEventListener('keydown', e => {
       if (e.code === 'Space' || e.code === 'ArrowUp') {
         e.preventDefault();
@@ -280,7 +300,6 @@
       }
     });
 
-    // --- ввод: тач / мышь ---
     function pointerHandler(ev) {
       if (gameState === 'ready') {
         startGame();
@@ -299,7 +318,6 @@
     canvas.addEventListener('pointerdown', pointerHandler, { passive: false });
     canvas.addEventListener('touchstart', pointerHandler, { passive: false });
 
-    // --- UI overlays ---
     const startOverlay = document.getElementById('start-overlay');
     const endOverlay   = document.getElementById('end-overlay');
     const startBtn     = document.getElementById('start-btn');
@@ -366,7 +384,6 @@
         endText.textContent = `Антон устал 😅 Твои очки: ${game.score}`;
       }
 
-      // отправка результата в Telegram WebApp (боту)
       try {
         if (window.Telegram && Telegram.WebApp) {
           Telegram.WebApp.sendData(JSON.stringify({
@@ -380,7 +397,6 @@
       }
     }
 
-    // --- рисование элементов ---
     function drawBackground(dt) {
       const bg = images.bg;
       const speed = game.speed * game.bgParallax;
@@ -400,7 +416,6 @@
         x += patternWidth;
       }
 
-      // надпись "Alona Beach"
       ctx.font = '32px system-ui';
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.strokeStyle = 'rgba(0,0,0,0.65)';
@@ -420,10 +435,8 @@
         const x = margin + i * (size + 6);
         const y = margin;
         if (i < game.lives) {
-          // заполненное сердце
           drawHeartShape(x, y, size, size, '#ff4b6a', '#ff9aa8');
         } else {
-          // пустой контур
           drawHeartShape(x, y, size, size, 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0.1)', true);
         }
       }
@@ -440,14 +453,12 @@
       let drawX = player.x;
       let drawY = player.y;
 
-      // лёгкая анимация бега
       if (gameState === 'running' || gameState === 'finishing') {
         player.runBobPhase += dt * (player.isOnGround ? 8 : 4);
         const bob = Math.sin(player.runBobPhase) * 4;
         drawY += bob;
       }
 
-      // подкат
       let h = player.height;
       let w = player.width;
       if (player.isSliding) {
@@ -456,11 +467,9 @@
         drawY = groundY - h + 8;
       }
 
-      // мерцание при ударе
       if (player.hitTimer > 0) {
         const alphaPulse = Math.sin(player.hitTimer * 25);
         if (alphaPulse > 0) {
-          // рисуем, но полупрозрачно
           ctx.save();
           ctx.globalAlpha = 0.5;
           drawAntonSprite(drawX, drawY, w, h);
@@ -502,28 +511,22 @@
       const girlsY = groundY - girlsHeight + 10;
 
       if (gameState === 'finishing') {
-        // девушки слегка подпрыгивают
         const t = performance.now() / 300;
         const bounce = Math.sin(t) * 8;
         ctx.drawImage(images.girls, girlsX, girlsY + bounce, girlsWidth, girlsHeight);
 
-        // герой добегает до них
         if (player.x < girlsX - 60) {
-          player.x += 220 * dt; // скорость подбегания
+          player.x += 220 * dt;
         } else {
-          // встал рядом, выигрыш
           player.x = girlsX - 40;
           drawAntonSprite(player.x, player.y, player.width, player.height, true);
           showSpeech('Oh yeah!', 2.0);
           finishGame(true);
         }
       } else if (gameState === 'finished') {
-        // на всякий случай дорисуем девушек в финале
         ctx.drawImage(images.girls, girlsX, girlsY, girlsWidth, girlsHeight);
       }
     }
-
-    // --- красивые фигуры (сердца, змеи, обезьяны, бутылки) ---
 
     function drawHeartShape(x, y, w, h, colorFill, colorHighlight, outlineOnly = false) {
       const cx = x + w / 2;
@@ -575,7 +578,6 @@
       ctx.fill();
       ctx.stroke();
 
-      // глаза
       ctx.fillStyle = '#fff';
       ctx.beginPath();
       ctx.arc(w * 0.15, h * 0.35, 3, 0, Math.PI * 2);
@@ -597,7 +599,6 @@
       const bodyH = h * 0.6;
       const headR = h * 0.23;
 
-      // тело
       const gradBody = ctx.createLinearGradient(0, 0, 0, bodyH);
       gradBody.addColorStop(0, '#8d6e63');
       gradBody.addColorStop(1, '#5d4037');
@@ -606,25 +607,21 @@
       ctx.roundRect(w * 0.25, h * 0.4, bodyW, bodyH, 12);
       ctx.fill();
 
-      // голова
       ctx.beginPath();
       ctx.arc(w * 0.5, h * 0.35, headR, 0, Math.PI * 2);
       ctx.fill();
 
-      // мордочка
       ctx.fillStyle = '#ffcc80';
       ctx.beginPath();
       ctx.ellipse(w * 0.5, h * 0.38, headR * 0.8, headR * 0.6, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // глаза
       ctx.fillStyle = '#000';
       ctx.beginPath();
       ctx.arc(w * 0.47, h * 0.34, 2.5, 0, Math.PI * 2);
       ctx.arc(w * 0.53, h * 0.34, 2.5, 0, Math.PI * 2);
       ctx.fill();
 
-      // рот
       ctx.strokeStyle = '#5d4037';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -638,13 +635,11 @@
       ctx.save();
       ctx.translate(x, y);
 
-      // тень
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       ctx.beginPath();
       ctx.ellipse(w * 0.5, h + 6, w * 0.6, 6, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // бутылка
       const grad = ctx.createLinearGradient(0, 0, 0, h);
       if (isBeer) {
         grad.addColorStop(0, '#ffe082');
@@ -668,15 +663,14 @@
       ctx.fill();
       ctx.stroke();
 
-      // этикетка
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath();
       ctx.roundRect((w - bodyW*0.7)/2, neckH + bodyH*0.25, bodyW*0.7, bodyH*0.4, 6);
       ctx.fill();
 
       ctx.restore();
     }
 
-    // --- анимация полёта бонуса к сердцам ---
     function spawnFlyingHeart(fromX, fromY) {
       const margin = 16;
       const size = 26;
@@ -700,7 +694,6 @@
         const h = flyingHearts[i];
         h.t += dt;
         const k = clamp(h.t / h.duration, 0, 1);
-        // небольшая дуга
         const lift = -60 * Math.sin(k * Math.PI);
         h.x = h.startX + (h.targetX - h.startX) * k;
         h.y = h.startY + (h.targetY - h.startY) * k + lift;
@@ -716,13 +709,10 @@
       });
     }
 
-    // --- основной цикл ---
     function update(dt) {
       if (gameState === 'running') {
-        // скорость постепенно растёт
         game.speed = 6 + game.obstaclesPassed * 0.2;
 
-        // физика игрока
         player.vy += player.gravity;
         player.y += player.vy;
         if (player.y >= groundY - player.height) {
@@ -731,7 +721,6 @@
           player.isOnGround = true;
         }
 
-        // слайд
         if (player.isSliding) {
           player.slideTimer -= dt;
           if (player.slideTimer <= 0) {
@@ -739,20 +728,17 @@
           }
         }
 
-        // таймер неуязвимости
         if (player.hitTimer > 0) {
           player.hitTimer -= dt;
           if (player.hitTimer < 0) player.hitTimer = 0;
         }
 
-        // спаун препятствий
         game.spawnTimer -= dt;
         if (game.spawnTimer <= 0) {
           spawnObstacle();
           game.spawnTimer = game.spawnInterval;
         }
 
-        // движение препятствий
         for (let i = obstacles.length - 1; i >= 0; i--) {
           const o = obstacles[i];
           o.x -= game.speed;
@@ -762,7 +748,6 @@
             game.score += 10;
 
             if (game.obstaclesPassed >= game.totalObstaclesToWin && gameState === 'running') {
-              // переходим в финальный забег
               gameState = 'finishing';
             }
           }
@@ -771,7 +756,6 @@
           }
         }
 
-        // движение бонусов
         for (let i = bonuses.length - 1; i >= 0; i--) {
           const b = bonuses[i];
           b.x -= game.speed;
@@ -780,7 +764,6 @@
             continue;
           }
 
-          // ловля бонуса
           const playerBox = getPlayerHitbox();
           if (rectsOverlap(playerBox, b)) {
             bonuses.splice(i, 1);
@@ -791,7 +774,6 @@
           }
         }
 
-        // столкновения с препятствиями
         const playerBox = getPlayerHitbox();
         obstacles.forEach(o => {
           if (rectsOverlap(playerBox, o) && player.hitTimer <= 0) {
@@ -805,7 +787,6 @@
 
         updateFlyingHearts(dt);
       } else if (gameState === 'finishing') {
-        // в этом состоянии персонаж просто добегает до девушек
         updateFlyingHearts(dt);
       }
     }
