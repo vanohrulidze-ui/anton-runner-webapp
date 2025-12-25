@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
   <meta charset="UTF-8" />
   <title>Anton Beach Runner</title>
@@ -18,11 +18,11 @@
       position: relative;
       width: 100%;
       height: 100%;
-      touch-action: none;
-      background: #000;
       display: flex;
       align-items: center;
       justify-content: center;
+      background: #000;
+      touch-action: none;
     }
     canvas {
       max-width: 100%;
@@ -31,6 +31,7 @@
       border-radius: 12px;
       box-shadow: 0 0 20px rgba(0,0,0,0.4);
     }
+
     .overlay {
       position: absolute;
       inset: 0;
@@ -72,6 +73,7 @@
       transform: translateY(1px);
       filter: brightness(0.95);
     }
+
     .speech {
       position: absolute;
       left: 50%;
@@ -85,6 +87,7 @@
       font-size: 16px;
       white-space: nowrap;
       box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      display: none;
     }
     .speech::after {
       content: "";
@@ -95,8 +98,8 @@
       border-width: 10px 10px 0 10px;
       border-style: solid;
       border-color: #fff transparent transparent transparent;
-      filter: drop-shadow(0 -2px 0 #222);
     }
+
     .hud-hint {
       position: absolute;
       bottom: 8px;
@@ -108,8 +111,6 @@
       pointer-events: none;
     }
   </style>
-  <!-- скрипт Телеграма: при локальном открытии просто не используется -->
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <div id="game-container">
@@ -120,7 +121,7 @@
         <div class="overlay-title">Anton Beach Runner</div>
         <div class="overlay-text">
           Нажми «Старт», чтобы Антон побежал по пляжу Alona Beach!<br/>
-          Тап по верхней половине экрана — прыжок, по нижней — пригнуться.
+          Верхняя часть экрана — прыжок, нижняя — пригнуться.
         </div>
         <button class="overlay-btn" id="start-btn">Старт</button>
       </div>
@@ -134,43 +135,15 @@
       </div>
     </div>
 
-    <div id="speech-bubble" class="speech" style="display:none;"></div>
+    <div id="speech-bubble" class="speech"></div>
 
     <div class="hud-hint">
-      Верх экрана — прыжок, низ — пригнуться. На клавиатуре: ↑ / Space — прыжок, ↓ — пригнуться.
+      Верх экрана — прыжок, низ — пригнуться. Клавиатура: ↑ / Space — прыжок, ↓ — пригнуться.
     </div>
   </div>
 
   <script>
-    // Полифил для roundRect (безопасный)
-    (function() {
-      const proto = (window.CanvasRenderingContext2D
-        ? window.CanvasRenderingContext2D.prototype
-        : null);
-      if (!proto || proto.roundRect) return;
-      proto.roundRect = function(x, y, width, height, radius) {
-        let r = radius || 0;
-        if (typeof r === 'number') {
-          r = { tl: r, tr: r, br: r, bl: r };
-        } else {
-          const def = { tl: 0, tr: 0, br: 0, bl: 0 };
-          for (let k in def) {
-            r[k] = r[k] || def[k];
-          }
-        }
-        this.moveTo(x + r.tl, y);
-        this.lineTo(x + width - r.tr, y);
-        this.quadraticCurveTo(x + width, y, x + width, y + r.tr);
-        this.lineTo(x + width, y + height - r.br);
-        this.quadraticCurveTo(x + width, y + height, x + width - r.br, y + height);
-        this.lineTo(x + r.bl, y + height);
-        this.quadraticCurveTo(x, y + height, x, y + height - r.bl);
-        this.lineTo(x, y + r.tl);
-        this.quadraticCurveTo(x, y, x + r.tl, y);
-        this.closePath();
-        return this;
-      };
-    })();
+    console.log("Game script loaded");
 
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
@@ -178,7 +151,7 @@
     const WIDTH = canvas.width;
     const HEIGHT = canvas.height;
 
-    // --- загрузка картинок ---
+    // --- изображения ---
     function loadImage(src) {
       const img = new Image();
       img.src = src;
@@ -186,15 +159,16 @@
     }
 
     const images = {
-      bg:       loadImage('img/beach_bg.png'),
-      antonRun: loadImage('img/anton_run.png'),
-      antonWin: loadImage('img/anton_win.png'), // опционально
-      girls:    loadImage('img/girls_final.png')
+      bg: loadImage('img/beach_bg.png'),
+      anton: loadImage('img/anton_run.png'),
+      girls: loadImage('img/girls_final.png')
     };
 
-    // --- состояния игры ---
+    // --- состояния ---
     let gameState = 'ready'; // ready | running | finishing | finished
     let lastTime = 0;
+
+    const groundY = HEIGHT * 0.78;
 
     const game = {
       speed: 6,
@@ -226,54 +200,22 @@
       hitTimer: 0,
       invincibleTime: 1.2
     };
-
-    const groundY = HEIGHT * 0.78;
     player.y = groundY - player.height;
 
     const obstacles = [];
     const bonuses = [];
     const flyingHearts = [];
 
-    function spawnObstacle() {
-      const types = ['snake', 'monkey'];
-      const type = types[Math.random() < 0.5 ? 0 : 1];
+    // --- DOM элементы ---
+    const startOverlay = document.getElementById('start-overlay');
+    const endOverlay = document.getElementById('end-overlay');
+    const startBtn = document.getElementById('start-btn');
+    const restartBtn = document.getElementById('restart-btn');
+    const endTitle = document.getElementById('end-title');
+    const endText = document.getElementById('end-text');
+    const speechBubble = document.getElementById('speech-bubble');
 
-      obstacles.push({
-        type,
-        x: WIDTH + 40,
-        y: groundY - 40,
-        width: 60,
-        height: 40,
-        passed: false
-      });
-
-      game.bonusesCounter++;
-      if (game.bonusesCounter >= 4) {
-        game.bonusesCounter = 0;
-        const bonusTypes = ['rum', 'beer'];
-        const bType = bonusTypes[Math.random() < 0.5 ? 0 : 1];
-
-        bonuses.push({
-          type: bType,
-          x: WIDTH + 40,
-          y: groundY - player.height - 60,
-          width: 34,
-          height: 54
-        });
-      }
-    }
-
-    function rectsOverlap(a, b) {
-      return a.x < b.x + b.width &&
-             a.x + a.width > b.x &&
-             a.y < b.y + b.height &&
-             a.y + a.height > b.y;
-    }
-
-    function clamp(v, min, max) {
-      return v < min ? min : (v > max ? max : v);
-    }
-
+    // --- управление ---
     function jump() {
       if (!player.isOnGround || gameState !== 'running') return;
       player.vy = -player.jumpStrength;
@@ -287,7 +229,7 @@
       player.slideTimer = player.slideDuration;
     }
 
-    window.addEventListener('keydown', e => {
+    window.addEventListener('keydown', (e) => {
       if (e.code === 'Space' || e.code === 'ArrowUp') {
         e.preventDefault();
         if (gameState === 'ready') {
@@ -307,25 +249,15 @@
         return;
       }
       const rect = canvas.getBoundingClientRect();
-      const y = (ev.clientY || (ev.touches && ev.touches[0].clientY)) - rect.top;
-      const relative = y / rect.height;
-      if (relative <= 0.5) {
-        jump();
-      } else {
-        slide();
-      }
+      const clientY = ev.clientY || (ev.touches && ev.touches[0].clientY);
+      if (!clientY) return;
+      const y = clientY - rect.top;
+      const rel = y / rect.height;
+      if (rel <= 0.5) jump(); else slide();
     }
 
     canvas.addEventListener('pointerdown', pointerHandler, { passive: false });
     canvas.addEventListener('touchstart', pointerHandler, { passive: false });
-
-    const startOverlay = document.getElementById('start-overlay');
-    const endOverlay   = document.getElementById('end-overlay');
-    const startBtn     = document.getElementById('start-btn');
-    const restartBtn   = document.getElementById('restart-btn');
-    const endTitle     = document.getElementById('end-title');
-    const endText      = document.getElementById('end-text');
-    const speechBubble = document.getElementById('speech-bubble');
 
     startBtn.addEventListener('click', startGame);
     restartBtn.addEventListener('click', () => {
@@ -379,44 +311,141 @@
       endOverlay.style.display = 'flex';
       if (won) {
         endTitle.textContent = 'Победа!';
-        endText.textContent = `Ты прошёл все препятствия и добежал до девушек 🎉 Очки: ${game.score}`;
+        endText.textContent = `Ты дошёл до девушек 🎉 Очки: ${game.score}`;
       } else {
         endTitle.textContent = 'Игра окончена';
         endText.textContent = `Антон устал 😅 Твои очки: ${game.score}`;
       }
 
+      // сообщения в Telegram (в WebApp) — безопасно, если там запуск
       try {
-        if (window.Telegram && Telegram.WebApp) {
-          Telegram.WebApp.sendData(JSON.stringify({
+        if (window.Telegram && window.Telegram.WebApp) {
+          window.Telegram.WebApp.sendData(JSON.stringify({
             type: 'game_result',
             score: game.score,
             won
           }));
         }
-      } catch(e) {
-        console.log('Telegram WebApp.sendData error', e);
+      } catch (e) {
+        console.log('Telegram sendData error', e);
       }
     }
 
+    // --- генерация препятствий / бонусов ---
+    function spawnObstacle() {
+      const types = ['snake', 'monkey'];
+      const type = types[Math.random() < 0.5 ? 0 : 1];
+
+      obstacles.push({
+        type,
+        x: WIDTH + 40,
+        y: groundY - 40,
+        width: 60,
+        height: 40,
+        passed: false
+      });
+
+      game.bonusesCounter++;
+      if (game.bonusesCounter >= 4) {
+        game.bonusesCounter = 0;
+        const bType = Math.random() < 0.5 ? 'rum' : 'beer';
+        bonuses.push({
+          type: bType,
+          x: WIDTH + 40,
+          y: groundY - player.height - 60,
+          width: 34,
+          height: 54
+        });
+      }
+    }
+
+    function rectsOverlap(a, b) {
+      return a.x < b.x + b.width &&
+             a.x + a.width > b.x &&
+             a.y < b.y + b.height &&
+             a.y + a.height > b.y;
+    }
+
+    function clamp(v, min, max) {
+      return v < min ? min : (v > max ? max : v);
+    }
+
+    function getPlayerHitbox() {
+      let w = player.width * 0.55;
+      let h = player.height * 0.85;
+      let x = player.x - w * 0.5;
+      let y = player.y + (player.height - h);
+
+      if (player.isSliding) {
+        h *= 0.7;
+        w *= 1.1;
+        y = groundY - h + 4;
+      }
+
+      return { x, y, width: w, height: h };
+    }
+
+    function spawnFlyingHeart(fromX, fromY) {
+      const margin = 16;
+      const size = 26;
+      const heartsX = margin + (game.lives - 1) * (size + 6) + size / 2;
+      const heartsY = margin + size / 2;
+
+      flyingHearts.push({
+        x: fromX,
+        y: fromY,
+        startX: fromX,
+        startY: fromY,
+        targetX: heartsX,
+        targetY: heartsY,
+        t: 0,
+        duration: 0.5
+      });
+    }
+
+    function updateFlyingHearts(dt) {
+      for (let i = flyingHearts.length - 1; i >= 0; i--) {
+        const h = flyingHearts[i];
+        h.t += dt;
+        const k = clamp(h.t / h.duration, 0, 1);
+        const lift = -60 * Math.sin(k * Math.PI);
+        h.x = h.startX + (h.targetX - h.startX) * k;
+        h.y = h.startY + (h.targetY - h.startY) * k + lift;
+        if (k >= 1) {
+          flyingHearts.splice(i, 1);
+        }
+      }
+    }
+
+    // --- отрисовка ---
     function drawBackground(dt) {
       const bg = images.bg;
       const speed = game.speed * game.bgParallax;
 
       if (gameState === 'running' || gameState === 'finishing') {
         game.bgOffset -= speed;
-        if (game.bgOffset <= -bg.width) {
+        if (bg.width > 0 && game.bgOffset <= -bg.width) {
           game.bgOffset += bg.width;
         }
       }
 
-      const patternWidth = bg.width;
-      let x = game.bgOffset;
+      if (bg.complete && bg.naturalWidth) {
+        const patternWidth = bg.width;
+        let x = game.bgOffset;
 
-      while (x < WIDTH) {
-        ctx.drawImage(bg, x, 0, patternWidth, HEIGHT);
-        x += patternWidth;
+        while (x < WIDTH) {
+          ctx.drawImage(bg, x, 0, patternWidth, HEIGHT);
+          x += patternWidth;
+        }
+      } else {
+        // запасной вариант, если фон не загрузился
+        ctx.fillStyle = '#4ec0ff';
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+        ctx.fillStyle = '#ffe0b2';
+        ctx.fillRect(0, groundY, WIDTH, HEIGHT - groundY);
       }
 
+      // надпись Alona Beach
       ctx.font = '32px system-ui';
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.strokeStyle = 'rgba(0,0,0,0.65)';
@@ -432,11 +461,12 @@
     function drawHearts() {
       const margin = 16;
       const size = 26;
+
       for (let i = 0; i < game.maxLives; i++) {
         const x = margin + i * (size + 6);
         const y = margin;
         if (i < game.lives) {
-          drawHeartShape(x, y, size, size, '#ff4b6a', '#ff9aa8');
+          drawHeartShape(x, y, size, size, '#ff4b6a', '#ff9aa8', false);
         } else {
           drawHeartShape(x, y, size, size, 'rgba(255,255,255,0.25)', 'rgba(255,255,255,0.1)', true);
         }
@@ -450,86 +480,7 @@
       ctx.fillText(`Lives: ${game.lives}`, WIDTH - 150, 55);
     }
 
-    function drawPlayer(dt) {
-      let drawX = player.x;
-      let drawY = player.y;
-
-      if (gameState === 'running' || gameState === 'finishing') {
-        player.runBobPhase += dt * (player.isOnGround ? 8 : 4);
-        const bob = Math.sin(player.runBobPhase) * 4;
-        drawY += bob;
-      }
-
-      let h = player.height;
-      let w = player.width;
-      if (player.isSliding) {
-        h *= 0.65;
-        w *= 1.1;
-        drawY = groundY - h + 8;
-      }
-
-      if (player.hitTimer > 0) {
-        const alphaPulse = Math.sin(player.hitTimer * 25);
-        if (alphaPulse > 0) {
-          ctx.save();
-          ctx.globalAlpha = 0.5;
-          drawAntonSprite(drawX, drawY, w, h);
-          ctx.restore();
-        }
-      } else {
-        drawAntonSprite(drawX, drawY, w, h);
-      }
-    }
-
-    function drawAntonSprite(x, y, w, h, winPose = false) {
-      const img = (winPose && images.antonWin && images.antonWin.complete && images.antonWin.naturalWidth)
-        ? images.antonWin
-        : images.antonRun;
-      ctx.drawImage(img, x - w * 0.5, y, w, h);
-    }
-
-    function drawObstacles() {
-      obstacles.forEach(o => {
-        const baseY = o.y;
-        if (o.type === 'snake') {
-          drawSnake(o.x, baseY, o.width, o.height);
-        } else {
-          drawMonkey(o.x, baseY - 10, o.width + 10, o.height + 10);
-        }
-      });
-    }
-
-    function drawBonuses() {
-      bonuses.forEach(b => {
-        drawBottle(b.x, b.y, b.width, b.height, b.type === 'beer');
-      });
-    }
-
-    function drawGirlsAndFinish(dt) {
-      const girlsWidth = 260;
-      const girlsHeight = 260;
-      const girlsX = WIDTH * 0.72;
-      const girlsY = groundY - girlsHeight + 10;
-
-      if (gameState === 'finishing') {
-        const t = performance.now() / 300;
-        const bounce = Math.sin(t) * 8;
-        ctx.drawImage(images.girls, girlsX, girlsY + bounce, girlsWidth, girlsHeight);
-
-        if (player.x < girlsX - 60) {
-          player.x += 220 * dt;
-        } else {
-          player.x = girlsX - 40;
-          drawAntonSprite(player.x, player.y, player.width, player.height, true);
-          showSpeech('Oh yeah!', 2.0);
-          finishGame(true);
-        }
-      } else if (gameState === 'finished') {
-        ctx.drawImage(images.girls, girlsX, girlsY, girlsWidth, girlsHeight);
-      }
-    }
-
-    function drawHeartShape(x, y, w, h, colorFill, colorHighlight, outlineOnly = false) {
+    function drawHeartShape(x, y, w, h, colorFill, colorHighlight, outlineOnly) {
       const cx = x + w / 2;
       const cy = y + h / 2;
       const r = w / 4;
@@ -554,6 +505,44 @@
         ctx.strokeStyle = colorFill;
         ctx.lineWidth = 1.6;
         ctx.stroke();
+      }
+
+      ctx.restore();
+    }
+
+    function drawPlayer(dt) {
+      let drawX = player.x;
+      let drawY = player.y;
+
+      if (gameState === 'running' || gameState === 'finishing') {
+        player.runBobPhase += dt * (player.isOnGround ? 8 : 4);
+        const bob = Math.sin(player.runBobPhase) * 4;
+        drawY += bob;
+      }
+
+      let w = player.width;
+      let h = player.height;
+      if (player.isSliding) {
+        h *= 0.65;
+        w *= 1.1;
+        drawY = groundY - h + 8;
+      }
+
+      ctx.save();
+
+      if (player.hitTimer > 0) {
+        const pulse = Math.sin(player.hitTimer * 25);
+        if (pulse > 0) {
+          ctx.globalAlpha = 0.5;
+        }
+      }
+
+      if (images.anton.complete && images.anton.naturalWidth) {
+        ctx.drawImage(images.anton, drawX - w * 0.5, drawY, w, h);
+      } else {
+        // запасной вариант — просто силуэт
+        ctx.fillStyle = '#222';
+        ctx.fillRect(drawX - w * 0.5, drawY, w, h);
       }
 
       ctx.restore();
@@ -604,8 +593,9 @@
       gradBody.addColorStop(0, '#8d6e63');
       gradBody.addColorStop(1, '#5d4037');
       ctx.fillStyle = gradBody;
+
       ctx.beginPath();
-      ctx.roundRect(w * 0.25, h * 0.4, bodyW, bodyH, 12);
+      ctx.rect(w * 0.25, h * 0.4, bodyW, bodyH);
       ctx.fill();
 
       ctx.beginPath();
@@ -658,58 +648,80 @@
       const bodyW = w * 0.7;
       const bodyH = h * 0.65;
 
+      // горлышко
       ctx.beginPath();
-      ctx.roundRect((w - neckW)/2, 0, neckW, neckH, 4);
-      ctx.roundRect((w - bodyW)/2, neckH, bodyW, bodyH, 8);
+      ctx.rect((w - neckW)/2, 0, neckW, neckH);
       ctx.fill();
       ctx.stroke();
 
+      // тело бутылки
+      ctx.beginPath();
+      ctx.rect((w - bodyW)/2, neckH, bodyW, bodyH);
+      ctx.fill();
+      ctx.stroke();
+
+      // белый лейбл
       ctx.fillStyle = 'rgba(255,255,255,0.85)';
       ctx.beginPath();
-      ctx.roundRect((w - bodyW*0.7)/2, neckH + bodyH*0.25, bodyW*0.7, bodyH*0.4, 6);
+      ctx.rect((w - bodyW*0.7)/2, neckH + bodyH*0.25, bodyW*0.7, bodyH*0.4);
       ctx.fill();
 
       ctx.restore();
     }
 
-    function spawnFlyingHeart(fromX, fromY) {
-      const margin = 16;
-      const size = 26;
-      const heartsX = margin + (game.lives-1) * (size + 6) + size/2;
-      const heartsY = margin + size/2;
-
-      flyingHearts.push({
-        x: fromX,
-        y: fromY,
-        startX: fromX,
-        startY: fromY,
-        targetX: heartsX,
-        targetY: heartsY,
-        t: 0,
-        duration: 0.5
+    function drawObstacles() {
+      obstacles.forEach(o => {
+        const baseY = o.y;
+        if (o.type === 'snake') {
+          drawSnake(o.x, baseY, o.width, o.height);
+        } else {
+          drawMonkey(o.x, baseY - 10, o.width + 10, o.height + 10);
+        }
       });
     }
 
-    function updateFlyingHearts(dt) {
-      for (let i = flyingHearts.length - 1; i >= 0; i--) {
-        const h = flyingHearts[i];
-        h.t += dt;
-        const k = clamp(h.t / h.duration, 0, 1);
-        const lift = -60 * Math.sin(k * Math.PI);
-        h.x = h.startX + (h.targetX - h.startX) * k;
-        h.y = h.startY + (h.targetY - h.startY) * k + lift;
-        if (k >= 1) {
-          flyingHearts.splice(i, 1);
+    function drawBonuses() {
+      bonuses.forEach(b => {
+        drawBottle(b.x, b.y, b.width, b.height, b.type === 'beer');
+      });
+    }
+
+    function drawGirlsAndFinish(dt) {
+      const girlsWidth = 260;
+      const girlsHeight = 260;
+      const girlsX = WIDTH * 0.72;
+      const girlsY = groundY - girlsHeight + 10;
+
+      if (gameState === 'finishing') {
+        const t = performance.now() / 300;
+        const bounce = Math.sin(t) * 8;
+
+        if (images.girls.complete && images.girls.naturalWidth) {
+          ctx.drawImage(images.girls, girlsX, girlsY + bounce, girlsWidth, girlsHeight);
+        }
+
+        if (player.x < girlsX - 60) {
+          player.x += 220 * dt;
+        } else {
+          player.x = girlsX - 40;
+          drawPlayer(0);
+          showSpeech('Oh yeah!', 2.0);
+          finishGame(true);
+        }
+      } else if (gameState === 'finished') {
+        if (images.girls.complete && images.girls.naturalWidth) {
+          ctx.drawImage(images.girls, girlsX, girlsY, girlsWidth, girlsHeight);
         }
       }
     }
 
     function drawFlyingHearts() {
       flyingHearts.forEach(h => {
-        drawHeartShape(h.x - 13, h.y - 13, 26, 26, '#ff4b6a', '#ff9aa8');
+        drawHeartShape(h.x - 13, h.y - 13, 26, 26, '#ff4b6a', '#ff9aa8', false);
       });
     }
 
+    // --- апдейт и рендер ---
     function update(dt) {
       if (gameState === 'running') {
         game.speed = 6 + game.obstaclesPassed * 0.2;
@@ -765,8 +777,8 @@
             continue;
           }
 
-          const playerBox = getPlayerHitbox();
-          if (rectsOverlap(playerBox, b)) {
+          const pb = getPlayerHitbox();
+          if (rectsOverlap(pb, b)) {
             bonuses.splice(i, 1);
             if (game.lives < game.maxLives) {
               game.lives++;
@@ -775,9 +787,9 @@
           }
         }
 
-        const playerBox = getPlayerHitbox();
+        const pb = getPlayerHitbox();
         obstacles.forEach(o => {
-          if (rectsOverlap(playerBox, o) && player.hitTimer <= 0) {
+          if (rectsOverlap(pb, o) && player.hitTimer <= 0) {
             game.lives--;
             player.hitTimer = player.invincibleTime;
             if (game.lives <= 0) {
@@ -792,24 +804,8 @@
       }
     }
 
-    function getPlayerHitbox() {
-      let w = player.width * 0.55;
-      let h = player.height * 0.85;
-      let x = player.x - w * 0.5;
-      let y = player.y + (player.height - h);
-
-      if (player.isSliding) {
-        h *= 0.7;
-        w *= 1.1;
-        y = groundY - h + 4;
-      }
-
-      return { x, y, width: w, height: h };
-    }
-
     function render(dt) {
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
-
       drawBackground(dt);
       drawHearts();
       drawScore();
@@ -835,8 +831,7 @@
     }
 
     resetGame();
-    showSpeech('Anton is ready!');
-
+    showSpeech('Anton is ready!', 1.5);
     requestAnimationFrame(loop);
   </script>
 </body>
