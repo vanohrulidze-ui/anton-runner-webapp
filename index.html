@@ -120,7 +120,7 @@
         <div class="overlay-title">Anton Beach Runner</div>
         <div class="overlay-text">
           Нажми «Старт», чтобы Антон побежал по пляжу Alona Beach!<br/>
-          Тап по верхней половине экрана — прыжок, по нижней — присесть.
+          Тап по верхней половине экрана — прыжок, по нижней — пригнуться.
         </div>
         <button class="overlay-btn" id="start-btn">Старт</button>
       </div>
@@ -142,9 +142,11 @@
   </div>
 
   <script>
-    // Полифил для roundRect (на случай старых браузеров / Safari)
+    // Полифил для roundRect (безопасный)
     (function() {
-      const proto = CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+      const proto = (window.CanvasRenderingContext2D
+        ? window.CanvasRenderingContext2D.prototype
+        : null);
       if (!proto || proto.roundRect) return;
       proto.roundRect = function(x, y, width, height, radius) {
         let r = radius || 0;
@@ -170,14 +172,13 @@
       };
     })();
 
-    // --- базовая настройка canvas ---
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
 
     const WIDTH = canvas.width;
     const HEIGHT = canvas.height;
 
-    // --- ресурсы (картинки) ---
+    // --- загрузка картинок ---
     function loadImage(src) {
       const img = new Image();
       img.src = src;
@@ -185,13 +186,13 @@
     }
 
     const images = {
-      bg: loadImage('img/beach_bg.png'),
+      bg:       loadImage('img/beach_bg.png'),
       antonRun: loadImage('img/anton_run.png'),
       antonWin: loadImage('img/anton_win.png'), // опционально
-      girls: loadImage('img/girls_final.png')
+      girls:    loadImage('img/girls_final.png')
     };
 
-    // --- состояние игры ---
+    // --- состояния игры ---
     let gameState = 'ready'; // ready | running | finishing | finished
     let lastTime = 0;
 
