@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Anton Beach Runner</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <style>
     html, body {
       margin: 0;
@@ -174,12 +174,10 @@
     }
 
     // --- СПРАЙТ-ЛИСТЫ ---
-    // при необходимости подправьте количество кадров и шаблон имени файла
-
-    const SNAKE_FRAME_COUNT = 8;
-    const MONKEY_FRAME_COUNT = 8;
-    const BEER_FRAME_COUNT  = 8;
-    const RUM_FRAME_COUNT   = 8;
+    const SNAKE_FRAME_COUNT = 6;
+    const MONKEY_FRAME_COUNT = 6;
+    const BEER_FRAME_COUNT  = 6;
+    const RUM_FRAME_COUNT   = 6;
     const GIRLS_FRAME_COUNT = 8;
     const WIN_FRAME_COUNT   = 8;
 
@@ -191,7 +189,6 @@
       return arr;
     }
 
-    // ожидаемые имена: snake_001.png, snake_002.png, ...
     const snakeFrames = loadSheetFrames(
       SNAKE_FRAME_COUNT,
       i => `img/snake-sheet/snake_${String(i).padStart(3,'0')}.png`
@@ -222,7 +219,7 @@
       i => `img/win-sheet/anton_win_${String(i).padStart(3,'0')}.png`
     );
 
-    // общее helper для анимаций без "чёрного квадрата"
+    // helper для анимаций без "чёрного квадрата"
     function getAnimatedFrame(frames, time, fps, fallbackImg) {
       const allLoaded = frames.length &&
         frames.every(f => f.complete && f.naturalWidth);
@@ -251,16 +248,16 @@
     const GIRLS_Y = groundY - GIRLS_HEIGHT + 10;
 
     const game = {
-      speed: 5,
+      speed: 8,
       maxLives: 3,
       lives: 3,
       score: 0,
       obstaclesPassed: 0,
-      totalObstaclesToWin: 15,
+      totalObstaclesToWin: 15,   // победа после 15 препятствий
       bgOffset: 0,
       bgParallax: 0.4,
       spawnTimer: 0,
-      spawnInterval: 1.8,
+      spawnInterval: 2.7,        // интервал между спавнами (секунды)
       bonusesCounter: 0
     };
 
@@ -275,10 +272,10 @@
     const player = {
       x: WIDTH * 0.2,
       y: 0,
-      width: 110,
-      height: 190,
+      width: 120,
+      height: 200,
       vy: 0,
-      gravity: 1.1,
+      gravity: 1.6,
       jumpStrength: 20,
       isOnGround: true,
       isSliding: false,
@@ -374,7 +371,7 @@
 
     function resetGame() {
       gameState = 'ready';
-      game.speed = 6;
+      game.speed = 8;
       game.lives = game.maxLives;
       game.score = 0;
       game.obstaclesPassed = 0;
@@ -392,6 +389,7 @@
       player.isSliding = false;
       player.slideTimer = 0;
       player.runBobPhase = 0;
+      player.runAnimTime = 0;
       player.hitTimer = 0;
 
       finalSceneTimer = 0;
@@ -443,11 +441,11 @@
       });
 
       game.bonusesCounter++;
-      if (game.bonusesCounter >= 2) {
+      if (game.bonusesCounter >= 3) {   // бонусы чаще, чем раньше
         game.bonusesCounter = 0;
         const bType = Math.random() < 0.5 ? 'beer' : 'rum';
         const bHeight = 70;
-        const bWidth = 80;
+        const bWidth = 90;
         bonuses.push({
           type: bType,
           x: WIDTH + 40,
@@ -747,7 +745,7 @@
     // --- апдейт и рендер ---
     function update(dt) {
       if (gameState === 'running') {
-        game.speed = 5 + game.obstaclesPassed * 0.15;
+        game.speed = 8 + game.obstaclesPassed * 0.15;
         player.runAnimTime += dt;
 
         obstacleAnimTime += dt;
@@ -794,7 +792,7 @@
               player.vy = 0;
               player.y = groundY - player.height;
 
-              // убираем все оставшиеся препятствия и бонусы, чтобы ничего не «тянулось»
+              // очищаем поле от препятствий и бонусов
               obstacles.length = 0;
               bonuses.length = 0;
             }
@@ -852,7 +850,7 @@
 
         const targetX = GIRLS_X - 60;
         const dir = targetX - player.x;
-        const move = Math.sign(dir) * game.speed * 24 * dt;
+        const move = Math.sign(dir) * game.speed * 16 * dt;
 
         if (Math.abs(dir) <= Math.abs(move)) {
           player.x = targetX;
