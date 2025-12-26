@@ -160,19 +160,83 @@
 
     const images = {
       bg: loadImage('img/beach_bg.png'),
-      girls: loadImage('img/girls_final.png'),
       antonJump: loadImage('img/anton_jump.png'),
-      antonWin: loadImage('img/anton_win.png'),
-      snake: loadImage('img/snake.png'),
-      monkey: loadImage('img/monkey.png'),
-      beer: loadImage('img/beer.png'),
-      rum: loadImage('img/rum.png')
+      // статичные варианты для безопасных фолбеков
+      girlsStatic: loadImage('img/girls_final.png'),
+      antonWinStatic: loadImage('img/anton_win.png')
     };
 
+    // герой - бег
     const RUN_FRAME_COUNT = 7;
     const runFrames = [];
     for (let i = 1; i <= RUN_FRAME_COUNT; i++) {
       runFrames.push(loadImage(`img/run-sheet/run${i}.png`));
+    }
+
+    // --- СПРАЙТ-ЛИСТЫ ---
+    // при необходимости подправьте количество кадров и шаблон имени файла
+
+    const SNAKE_FRAME_COUNT = 8;
+    const MONKEY_FRAME_COUNT = 8;
+    const BEER_FRAME_COUNT  = 8;
+    const RUM_FRAME_COUNT   = 8;
+    const GIRLS_FRAME_COUNT = 8;
+    const WIN_FRAME_COUNT   = 8;
+
+    function loadSheetFrames(count, pathBuilder) {
+      const arr = [];
+      for (let i = 1; i <= count; i++) {
+        arr.push(loadImage(pathBuilder(i)));
+      }
+      return arr;
+    }
+
+    // ожидаемые имена: snake_001.png, snake_002.png, ...
+    const snakeFrames = loadSheetFrames(
+      SNAKE_FRAME_COUNT,
+      i => `img/snake-sheet/snake_${String(i).padStart(3,'0')}.png`
+    );
+
+    const monkeyFrames = loadSheetFrames(
+      MONKEY_FRAME_COUNT,
+      i => `img/monkey-sheet/monkey_${String(i).padStart(3,'0')}.png`
+    );
+
+    const beerFrames = loadSheetFrames(
+      BEER_FRAME_COUNT,
+      i => `img/beer-sheet/beer_${String(i).padStart(3,'0')}.png`
+    );
+
+    const rumFrames = loadSheetFrames(
+      RUM_FRAME_COUNT,
+      i => `img/rum-sheet/rum_${String(i).padStart(3,'0')}.png`
+    );
+
+    const girlsFrames = loadSheetFrames(
+      GIRLS_FRAME_COUNT,
+      i => `img/girls-final-sheet/girls_final_${String(i).padStart(3,'0')}.png`
+    );
+
+    const winFrames = loadSheetFrames(
+      WIN_FRAME_COUNT,
+      i => `img/win-sheet/anton_win_${String(i).padStart(3,'0')}.png`
+    );
+
+    // общее helper для анимаций без "чёрного квадрата"
+    function getAnimatedFrame(frames, time, fps, fallbackImg) {
+      const allLoaded = frames.length &&
+        frames.every(f => f.complete && f.naturalWidth);
+
+      if (allLoaded) {
+        const idx = Math.floor(time * fps) % frames.length;
+        return frames[idx];
+      }
+
+      if (fallbackImg && fallbackImg.complete && fallbackImg.naturalWidth) {
+        return fallbackImg;
+      }
+
+      return null;
     }
 
     // --- состояния ---
@@ -183,24 +247,30 @@
 
     const GIRLS_WIDTH = 260;
     const GIRLS_HEIGHT = 260;
-    const GIRLS_X = WIDTH * 0.72;
+    const GIRLS_X = WIDTH - GIRLS_WIDTH - Math.round(WIDTH * 0.02);
     const GIRLS_Y = groundY - GIRLS_HEIGHT + 10;
 
     const game = {
-      speed: 5,                 // снижена базовая скорость
+      speed: 5,
       maxLives: 3,
       lives: 3,
       score: 0,
       obstaclesPassed: 0,
-      totalObstaclesToWin: 20,  // победа после 20 препятствий
+      totalObstaclesToWin: 15,
       bgOffset: 0,
       bgParallax: 0.4,
       spawnTimer: 0,
-      spawnInterval: 2.4,       // увеличенное расстояние между препятствиями
+      spawnInterval: 1.8,
       bonusesCounter: 0
     };
 
-    let finalSceneTimer = 0; // таймер финальной сцены (5 секунд)
+    let finalSceneTimer = 0;
+
+    // времена для анимаций спрайт-листов
+    let obstacleAnimTime = 0;
+    let bonusAnimTime = 0;
+    let girlsAnimTime = 0;
+    let finalAnimTime = 0;
 
     const player = {
       x: WIDTH * 0.2,
@@ -304,15 +374,13 @@
 
     function resetGame() {
       gameState = 'ready';
-      game.speed = 5;
+      game.speed = 6;
       game.lives = game.maxLives;
       game.score = 0;
       game.obstaclesPassed = 0;
       game.bgOffset = 0;
       game.spawnTimer = 0;
       game.bonusesCounter = 0;
-      finalSceneTimer = 0;
-
       obstacles.length = 0;
       bonuses.length = 0;
       flyingHearts.length = 0;
@@ -324,8 +392,13 @@
       player.isSliding = false;
       player.slideTimer = 0;
       player.runBobPhase = 0;
-      player.runAnimTime = 0;
       player.hitTimer = 0;
+
+      finalSceneTimer = 0;
+      finalAnimTime = 0;
+      obstacleAnimTime = 0;
+      bonusAnimTime = 0;
+      girlsAnimTime = 0;
     }
 
     function finishGame(won) {
@@ -339,7 +412,6 @@
         endText.textContent = `Антон устал 😅 Твои очки: ${game.score}`;
       }
 
-      // сообщения в Telegram (в WebApp) — безопасно, если там запуск
       try {
         if (window.Telegram && window.Telegram.WebApp) {
           window.Telegram.WebApp.sendData(JSON.stringify({
@@ -363,7 +435,7 @@
 
       obstacles.push({
         type,
-        x: WIDTH + 40,
+        x: WIDTH + 40 + 200 + Math.random() * 150,
         y: groundY - oHeight,
         width: oWidth,
         height: oHeight,
@@ -371,11 +443,11 @@
       });
 
       game.bonusesCounter++;
-      if (game.bonusesCounter >= 4) {
+      if (game.bonusesCounter >= 2) {
         game.bonusesCounter = 0;
-        const bType = Math.random() < 0.5 ? 'rum' : 'beer';
+        const bType = Math.random() < 0.5 ? 'beer' : 'rum';
         const bHeight = 70;
-        const bWidth = 40;
+        const bWidth = 80;
         bonuses.push({
           type: bType,
           x: WIDTH + 40,
@@ -398,14 +470,13 @@
     }
 
     function getPlayerHitbox() {
-      let w = player.width * 0.55;
-      let h = player.height * 0.85;
+      let w = player.width * 0.45;
+      let h = player.height * 0.6;
       let x = player.x - w * 0.5;
-      let y = player.y + (player.height - h);
+      let y = player.y + (player.height - h) - 4;
 
       if (player.isSliding) {
-        h *= 0.7;
-        w *= 1.1;
+        h *= 0.8;
         y = groundY - h + 4;
       }
 
@@ -465,14 +536,12 @@
           x += patternWidth;
         }
       } else {
-        // запасной вариант, если фон не загрузился
         ctx.fillStyle = '#4ec0ff';
         ctx.fillRect(0, 0, WIDTH, HEIGHT);
         ctx.fillStyle = '#ffe0b2';
         ctx.fillRect(0, groundY, WIDTH, HEIGHT - groundY);
       }
 
-      // надпись Alona Beach
       ctx.font = '32px system-ui';
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.strokeStyle = 'rgba(0,0,0,0.65)';
@@ -567,17 +636,16 @@
       let imgToDraw = null;
 
       if (!player.isOnGround) {
-        // во время прыжка используем anton_jump
         if (images.antonJump.complete && images.antonJump.naturalWidth) {
           imgToDraw = images.antonJump;
         }
       } else {
-        // анимация бега по спрайтам
-        const anyLoaded = runFrames.some(f => f.complete && f.naturalWidth);
-        if (anyLoaded) {
+        const allRunFramesLoaded = runFrames.length &&
+          runFrames.every(f => f.complete && f.naturalWidth);
+        if (allRunFramesLoaded) {
           const frameIndex = Math.floor(player.runAnimTime * 12) % runFrames.length;
           const frame = runFrames[frameIndex];
-          if (frame && frame.complete && frame.naturalWidth) {
+          if (frame) {
             imgToDraw = frame;
           }
         }
@@ -586,7 +654,6 @@
       if (imgToDraw) {
         ctx.drawImage(imgToDraw, drawX - w * 0.5, drawY, w, h);
       } else {
-        // запасной вариант — просто силуэт
         ctx.fillStyle = '#222';
         ctx.fillRect(drawX - w * 0.5, drawY, w, h);
       }
@@ -598,14 +665,14 @@
       obstacles.forEach(o => {
         let img = null;
         if (o.type === 'snake') {
-          img = images.snake;
+          img = getAnimatedFrame(snakeFrames, obstacleAnimTime, 10, null);
         } else {
-          img = images.monkey;
+          img = getAnimatedFrame(monkeyFrames, obstacleAnimTime, 10, null);
         }
-        if (img && img.complete && img.naturalWidth) {
+
+        if (img) {
           ctx.drawImage(img, o.x, o.y, o.width, o.height);
         } else {
-          // запасной прямоугольник
           ctx.fillStyle = '#4caf50';
           ctx.fillRect(o.x, o.y, o.width, o.height);
         }
@@ -616,11 +683,12 @@
       bonuses.forEach(b => {
         let img = null;
         if (b.type === 'beer') {
-          img = images.beer;
+          img = getAnimatedFrame(beerFrames, bonusAnimTime, 8, null);
         } else {
-          img = images.rum;
+          img = getAnimatedFrame(rumFrames, bonusAnimTime, 8, null);
         }
-        if (img && img.complete && img.naturalWidth) {
+
+        if (img) {
           ctx.drawImage(img, b.x, b.y, b.width, b.height);
         } else {
           ctx.fillStyle = '#ffb300';
@@ -630,21 +698,23 @@
     }
 
     function drawGirls(dt) {
-      if (!images.girls.complete || !images.girls.naturalWidth) return;
+      const img = getAnimatedFrame(girlsFrames, girlsAnimTime, 6, images.girlsStatic);
+      if (!img) return;
 
       let y = GIRLS_Y;
-      // во время финишного забега — лёгкий "подпрыг"
       if (gameState === 'finishing') {
         const t = performance.now() / 300;
-        y += Math.sin(t) * 8;
+        const bounce = Math.sin(t) * 8;
+        y += bounce;
       }
-      ctx.drawImage(images.girls, GIRLS_X, y, GIRLS_WIDTH, GIRLS_HEIGHT);
+
+      ctx.drawImage(img, GIRLS_X, y, GIRLS_WIDTH, GIRLS_HEIGHT);
     }
 
     function drawFinalScene() {
-      const img = images.antonWin;
-      if (img && img.complete && img.naturalWidth) {
-        // переносим финальный спрайт в центр экрана
+      const img = getAnimatedFrame(winFrames, finalAnimTime, 10, images.antonWinStatic);
+
+      if (img) {
         const maxW = WIDTH * 0.6;
         const maxH = HEIGHT * 0.6;
         const scale = Math.min(maxW / img.width, maxH / img.height, 1);
@@ -654,7 +724,6 @@
         const y = (HEIGHT - drawH) / 2;
         ctx.drawImage(img, x, y, drawW, drawH);
       } else {
-        // запасной вариант — большой прямоугольник-плашка в центре
         const w = WIDTH * 0.4;
         const h = HEIGHT * 0.4;
         const x = (WIDTH - w) / 2;
@@ -678,10 +747,12 @@
     // --- апдейт и рендер ---
     function update(dt) {
       if (gameState === 'running') {
-        // чуть сниженная и мягче растущая скорость
         game.speed = 5 + game.obstaclesPassed * 0.15;
-
         player.runAnimTime += dt;
+
+        obstacleAnimTime += dt;
+        bonusAnimTime += dt;
+        girlsAnimTime += dt;
 
         player.vy += player.gravity;
         player.y += player.vy;
@@ -718,12 +789,14 @@
             game.score += 10;
 
             if (game.obstaclesPassed >= game.totalObstaclesToWin && gameState === 'running') {
-              // достаточно препятствий — начинаем финишный забег к девушкам
               gameState = 'finishing';
-              // фиксируем игрока на земле
               player.isOnGround = true;
               player.vy = 0;
               player.y = groundY - player.height;
+
+              // убираем все оставшиеся препятствия и бонусы, чтобы ничего не «тянулось»
+              obstacles.length = 0;
+              bonuses.length = 0;
             }
           }
           if (o.x + o.width < -40) {
@@ -751,7 +824,19 @@
 
         const pb = getPlayerHitbox();
         obstacles.forEach(o => {
-          if (rectsOverlap(pb, o) && player.hitTimer <= 0) {
+          const trimmedHeight = o.height * 0.55;
+          const trimmedY = o.y + (o.height - trimmedHeight);
+          const trimmedWidth = o.width * 0.7;
+          const trimmedX = o.x + (o.width - trimmedWidth) / 2;
+
+          const obstacleHitbox = {
+            x: trimmedX,
+            y: trimmedY,
+            width: trimmedWidth,
+            height: trimmedHeight
+          };
+
+          if (rectsOverlap(pb, obstacleHitbox) && player.hitTimer <= 0) {
             game.lives--;
             player.hitTimer = player.invincibleTime;
             if (game.lives <= 0) {
@@ -762,26 +847,26 @@
 
         updateFlyingHearts(dt);
       } else if (gameState === 'finishing') {
-        // финишный забег к девушкам
         player.runAnimTime += dt;
+        girlsAnimTime += dt;
+
         const targetX = GIRLS_X - 60;
         const dir = targetX - player.x;
-        const move = Math.sign(dir) * game.speed * 1.6 * dt;
+        const move = Math.sign(dir) * game.speed * 24 * dt;
+
         if (Math.abs(dir) <= Math.abs(move)) {
           player.x = targetX;
-
-          // запускаем финальную сцену
           gameState = 'final_scene';
-          finalSceneTimer = 5.0; // 5 секунд
+          finalSceneTimer = 5.0;
+          finalAnimTime = 0;
           showSpeech('Oh yeah!', 2.0);
         } else {
           player.x += move;
         }
 
-        // фоны и сердца всё ещё могут жить
         updateFlyingHearts(dt);
       } else if (gameState === 'final_scene') {
-        // только таймер финальной сцены
+        finalAnimTime += dt;
         finalSceneTimer -= dt;
         if (finalSceneTimer <= 0 && gameState === 'final_scene') {
           finishGame(true);
@@ -793,20 +878,18 @@
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
       drawBackground(dt);
 
-      if (gameState !== 'final_scene') {
-        // Девушки стоят справа с самого начала игры
-        drawGirls(dt);
-
-        drawHearts();
-        drawScore();
-        drawObstacles();
-        drawBonuses();
-        drawPlayer(dt);
-        drawFlyingHearts();
-      } else {
-        // финальная сцена — только фон и победный Антон
+      if (gameState === 'final_scene') {
         drawFinalScene();
+        return;
       }
+
+      drawHearts();
+      drawScore();
+      drawObstacles();
+      drawBonuses();
+      drawGirls(dt);
+      drawPlayer(dt);
+      drawFlyingHearts();
     }
 
     function loop(timestamp) {
